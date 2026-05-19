@@ -9,7 +9,7 @@
 
 ### Added
 
-- Added first-class OAuth device-code callback metadata, shared polling support, and GitHub Copilot OAuth integration.
+- Added first-class OAuth device-code callback metadata, shared polling support, GitHub Copilot OAuth integration, and an OpenAI Codex device-code login option.
 
 ### Fixed
 

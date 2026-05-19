@@ -19,7 +19,12 @@ export {
 	refreshGitHubCopilotToken,
 } from "./github-copilot.ts";
 // OpenAI Codex (ChatGPT OAuth)
-export { loginOpenAICodex, openaiCodexOAuthProvider, refreshOpenAICodexToken } from "./openai-codex.ts";
+export {
+	loginOpenAICodex,
+	loginOpenAICodexDeviceCode,
+	openaiCodexOAuthProvider,
+	refreshOpenAICodexToken,
+} from "./openai-codex.ts";
 
 export * from "./types.ts";
 
