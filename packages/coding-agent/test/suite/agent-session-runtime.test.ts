@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxAssistantMessage, registerFauxProvider } from "@earendil-works/pi-ai";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	type CreateAgentSessionRuntimeFactory,
 	createAgentSessionFromServices,
@@ -11,6 +11,7 @@ import {
 } from "../../src/core/agent-session-runtime.js";
 import { AuthStorage } from "../../src/core/auth-storage.js";
 import { SessionManager } from "../../src/core/session-manager.js";
+import { initTheme } from "../../src/modes/interactive/theme/theme.js";
 import type {
 	ExtensionAPI,
 	ExtensionFactory,
@@ -28,6 +29,10 @@ type RecordedSessionEvent =
 
 describe("AgentSessionRuntime characterization", () => {
 	const cleanups: Array<() => Promise<void> | void> = [];
+
+	beforeEach(() => {
+		initTheme("dark");
+	});
 
 	afterEach(async () => {
 		while (cleanups.length > 0) {
@@ -107,7 +112,25 @@ describe("AgentSessionRuntime characterization", () => {
 			agentDir: tempDir,
 			sessionManager: SessionManager.create(tempDir),
 		});
-		await runtime.session.bindExtensions({});
+		const bindRuntimeExtensions = async () => {
+			await runtime.session.bindExtensions({
+				commandContextActions: {
+					waitForIdle: () => runtime.session.agent.waitForIdle(),
+					newSession: (newSessionOptions) => runtime.newSession(newSessionOptions),
+					fork: async (entryId, forkOptions) => {
+						const result = await runtime.fork(entryId, forkOptions);
+						return { cancelled: result.cancelled };
+					},
+					navigateTree: async (targetId, navigateOptions) => {
+						const result = await runtime.session.navigateTree(targetId, navigateOptions);
+						return { cancelled: result.cancelled };
+					},
+					switchSession: (sessionPath, switchOptions) => runtime.switchSession(sessionPath, switchOptions),
+					reload: () => runtime.session.reload(),
+				},
+			});
+		};
+		await bindRuntimeExtensions();
 
 		cleanups.push(async () => {
 			await runtime.dispose();
@@ -204,6 +227,133 @@ describe("AgentSessionRuntime characterization", () => {
 			{ type: "session_shutdown", reason: "resume", targetSessionFile: originalSessionFile },
 			{ type: "session_start", reason: "resume", previousSessionFile: secondSessionFile },
 		]);
+	});
+
+	it("ReplacedSessionContext.dispatchUserInput dispatches into a fresh replacement session", async () => {
+		const { runtime } = await createRuntimeForTest((_pi: ExtensionAPI) => {});
+		const originalSession = runtime.session;
+
+		const result = await runtime.newSession({
+			withSession: async (ctx) => {
+				await ctx.dispatchUserInput("fresh input");
+			},
+		});
+
+		expect(result.cancelled).toBe(false);
+		expect(runtime.session).not.toBe(originalSession);
+		const firstMessage = runtime.session.messages[0];
+		expect(firstMessage?.role).toBe("user");
+		if (firstMessage?.role !== "user") throw new Error("missing replacement-session user message");
+		expect(firstMessage.content).toEqual([{ type: "text", text: "fresh input" }]);
+		expect(runtime.session.messages.at(-1)?.role).toBe("assistant");
+	});
+
+	it("agent_end can schedule ctx.newSession and dispatch slash input through the replacement context", async () => {
+		let shouldSchedule = true;
+		let resolveFresh!: () => void;
+		let rejectFresh!: (err: unknown) => void;
+		const freshDone = new Promise<void>((resolve, reject) => {
+			resolveFresh = resolve;
+			rejectFresh = reject;
+		});
+		let commandArgs: string | undefined;
+		let commandSessionFile: string | undefined;
+		let staleContextError: string | undefined;
+		const errors: string[] = [];
+		const { runtime } = await createRuntimeForTest((pi: ExtensionAPI) => {
+			pi.registerCommand("fresh-target", {
+				description: "fresh target",
+				handler: async (args, ctx) => {
+					commandArgs = args;
+					commandSessionFile = ctx.sessionManager.getSessionFile();
+				},
+			});
+			pi.on("agent_end", (_event, ctx) => {
+				if (!shouldSchedule) return;
+				shouldSchedule = false;
+				setTimeout(() => {
+					void (async () => {
+						await ctx.newSession({
+							withSession: async (newCtx) => {
+								await newCtx.dispatchUserInput("/fresh-target 55");
+							},
+						});
+						try {
+							await ctx.dispatchUserInput("old context should be stale");
+						} catch (err) {
+							staleContextError = err instanceof Error ? err.message : String(err);
+						}
+					})().then(resolveFresh, rejectFresh);
+				}, 0);
+			});
+		});
+		runtime.session.extensionRunner.onError((error) => errors.push(error.error));
+		runtime.setRebindSession(async () => {
+			await runtime.session.bindExtensions({
+				commandContextActions: {
+					waitForIdle: () => runtime.session.agent.waitForIdle(),
+					newSession: (newSessionOptions) => runtime.newSession(newSessionOptions),
+					fork: async (entryId, forkOptions) => {
+						const result = await runtime.fork(entryId, forkOptions);
+						return { cancelled: result.cancelled };
+					},
+					navigateTree: async (targetId, navigateOptions) => {
+						const result = await runtime.session.navigateTree(targetId, navigateOptions);
+						return { cancelled: result.cancelled };
+					},
+					switchSession: (sessionPath, switchOptions) => runtime.switchSession(sessionPath, switchOptions),
+					reload: () => runtime.session.reload(),
+				},
+			});
+		});
+		const originalSession = runtime.session;
+
+		await runtime.session.prompt("start");
+		await freshDone;
+
+		expect(errors).toEqual([]);
+		expect(runtime.session).not.toBe(originalSession);
+		expect(commandArgs).toBe("55");
+		expect(commandSessionFile).toBe(runtime.session.sessionFile);
+		expect(runtime.session.messages).toEqual([]);
+		expect(staleContextError).toContain("stale after session replacement");
+	});
+
+	it("agent_end scheduled ctx.newSession honors session_before_switch cancellation", async () => {
+		let shouldSchedule = true;
+		let resolveFresh!: (result: { cancelled: boolean; withSessionRan: boolean }) => void;
+		let rejectFresh!: (err: unknown) => void;
+		const freshDone = new Promise<{ cancelled: boolean; withSessionRan: boolean }>((resolve, reject) => {
+			resolveFresh = resolve;
+			rejectFresh = reject;
+		});
+		const { runtime } = await createRuntimeForTest((pi: ExtensionAPI) => {
+			pi.on("session_before_switch", (event) => {
+				if (event.reason === "new") return { cancel: true };
+			});
+			pi.on("agent_end", (_event, ctx) => {
+				if (!shouldSchedule) return;
+				shouldSchedule = false;
+				setTimeout(() => {
+					void (async () => {
+						let withSessionRan = false;
+						const result = await ctx.newSession({
+							withSession: async () => {
+								withSessionRan = true;
+							},
+						});
+						return { cancelled: result.cancelled, withSessionRan };
+					})().then(resolveFresh, rejectFresh);
+				}, 0);
+			});
+		});
+		const originalSession = runtime.session;
+
+		await runtime.session.prompt("start");
+		const result = await freshDone;
+
+		expect(result).toEqual({ cancelled: true, withSessionRan: false });
+		expect(runtime.session).toBe(originalSession);
 	});
 
 	it("honors session_before_switch cancellation for new and resume", async () => {

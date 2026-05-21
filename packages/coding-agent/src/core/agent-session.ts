@@ -52,6 +52,7 @@ import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.
 import { createToolHtmlRenderer } from "./export-html/tool-renderer.js";
 import {
 	type ContextUsage,
+	type DispatchUserInputOptions,
 	type ExtensionCommandContextActions,
 	type ExtensionErrorListener,
 	ExtensionRunner,
@@ -1347,6 +1348,14 @@ export class AgentSession {
 		});
 	}
 
+	async dispatchUserInput(input: string, options?: DispatchUserInputOptions): Promise<void> {
+		await this.prompt(input, {
+			expandPromptTemplates: true,
+			streamingBehavior: options?.deliverAs,
+			source: "extension",
+		});
+	}
+
 	/**
 	 * Clear all queued messages and return them.
 	 * Useful for restoring to editor when user aborts.
@@ -2221,6 +2230,7 @@ export class AgentSession {
 					})();
 				},
 				getSystemPrompt: () => this.systemPrompt,
+				dispatchUserInput: (input, options) => this.dispatchUserInput(input, options),
 			},
 			{
 				registerProvider: (name, config) => {
@@ -3091,6 +3101,7 @@ export class AgentSession {
 		) as ReplacedSessionContext;
 		context.sendMessage = (message, options) => this.sendCustomMessage(message, options);
 		context.sendUserMessage = (content, options) => this.sendUserMessage(content, options);
+		context.dispatchUserInput = (input, options) => this.dispatchUserInput(input, options);
 		return context;
 	}
 

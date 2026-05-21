@@ -247,6 +247,87 @@ describe("AgentSession prompt characterization", () => {
 		expect(harness.getPendingResponseCount()).toBe(1);
 	});
 
+	it("dispatchUserInput emits input events with source=extension", async () => {
+		const sources: string[] = [];
+		const texts: string[] = [];
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.on("input", (event) => {
+						sources.push(event.source);
+						texts.push(event.text);
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("ok")]);
+
+		await harness.session.dispatchUserInput("hello from extension");
+
+		expect(sources).toEqual(["extension"]);
+		expect(texts).toEqual(["hello from extension"]);
+	});
+
+	it("dispatchUserInput expands prompt templates", async () => {
+		const template: PromptTemplate = {
+			name: "review",
+			description: "Review template",
+			content: "Review this code: $1",
+			filePath: "/virtual/review.md",
+			sourceInfo: createSyntheticSourceInfo("/virtual/review.md", {
+				source: "local",
+				scope: "temporary",
+				origin: "top-level",
+			}),
+		};
+		const resourceLoader = {
+			...createTestResourceLoader(),
+			getPrompts: () => ({ prompts: [template], diagnostics: [] }),
+		};
+		const harness = await createHarness({ resourceLoader });
+		harnesses.push(harness);
+		let expandedPrompt = "";
+		harness.setResponses([
+			(context) => {
+				const user = context.messages.find((message) => message.role === "user");
+				expandedPrompt = user ? getMessageText(user) : "";
+				return fauxAssistantMessage("ok");
+			},
+		]);
+
+		await harness.session.dispatchUserInput("/review src/index.ts");
+
+		expect(expandedPrompt).toBe("Review this code: src/index.ts");
+	});
+
+	it("dispatchUserInput routes extension commands through the normal slash-command path", async () => {
+		const commandRuns: string[] = [];
+		const inputEvents: string[] = [];
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.registerCommand("testcmd", {
+						description: "Test command",
+						handler: async (args) => {
+							commandRuns.push(args);
+						},
+					});
+					pi.on("input", (event) => inputEvents.push(event.text));
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("should stay queued")]);
+
+		await harness.session.dispatchUserInput("/testcmd hello world");
+
+		expect(commandRuns).toEqual(["hello world"]);
+		expect(inputEvents).toEqual([]);
+		expect(harness.session.messages).toEqual([]);
+		expect(harness.getPendingResponseCount()).toBe(1);
+	});
+
 	it("sendUserMessage while idle triggers a turn", async () => {
 		const harness = await createHarness();
 		harnesses.push(harness);

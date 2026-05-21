@@ -1633,6 +1633,15 @@ export class InteractiveMode {
 				})();
 			},
 			getSystemPrompt: () => this.session.systemPrompt,
+			dispatchUserInput: (input, options) => this.session.dispatchUserInput(input, options),
+			newSession: async (options) => {
+				const result = await this.runtimeHost.newSession(options);
+				if (!result.cancelled) {
+					this.renderCurrentSessionState();
+					this.ui.requestRender();
+				}
+				return result;
+			},
 		});
 
 		// Set up the extension shortcut handler on the default editor
