@@ -19,6 +19,7 @@ import type {
 	ContextEvent,
 	ContextEventResult,
 	ContextUsage,
+	DispatchUserInputHandler,
 	Extension,
 	ExtensionActions,
 	ExtensionCommandContext,
@@ -238,6 +239,7 @@ export class ExtensionRunner {
 	private getContextUsageFn: () => ContextUsage | undefined = () => undefined;
 	private compactFn: (options?: CompactOptions) => void = () => {};
 	private getSystemPromptFn: () => string = () => "";
+	private dispatchUserInputFn: DispatchUserInputHandler = async () => {};
 	private newSessionHandler: NewSessionHandler = async () => ({ cancelled: false });
 	private forkHandler: ForkHandler = async () => ({ cancelled: false });
 	private navigateTreeHandler: NavigateTreeHandler = async () => ({ cancelled: false });
@@ -297,6 +299,7 @@ export class ExtensionRunner {
 		this.getContextUsageFn = contextActions.getContextUsage;
 		this.compactFn = contextActions.compact;
 		this.getSystemPromptFn = contextActions.getSystemPrompt;
+		this.dispatchUserInputFn = contextActions.dispatchUserInput;
 
 		// Flush provider registrations queued during extension loading
 		for (const { name, config, extensionPath } of this.runtime.pendingProviderRegistrations) {
@@ -630,6 +633,14 @@ export class ExtensionRunner {
 				runner.assertActive();
 				return runner.getSystemPromptFn();
 			},
+			dispatchUserInput: (input, options) => {
+				runner.assertActive();
+				return runner.dispatchUserInputFn(input, options);
+			},
+			newSession: (options) => {
+				runner.assertActive();
+				return runner.newSessionHandler(options);
+			},
 		};
 	}
 
@@ -644,10 +655,6 @@ export class ExtensionRunner {
 		context.waitForIdle = () => {
 			this.assertActive();
 			return this.waitForIdleFn();
-		};
-		context.newSession = (options) => {
-			this.assertActive();
-			return this.newSessionHandler(options);
 		};
 		context.fork = (entryId, options) => {
 			this.assertActive();

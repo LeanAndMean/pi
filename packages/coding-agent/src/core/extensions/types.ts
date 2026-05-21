@@ -292,6 +292,11 @@ export interface CompactOptions {
 	onError?: (error: Error) => void;
 }
 
+export interface DispatchUserInputOptions {
+	/** When the agent is streaming, how to queue the input. */
+	deliverAs?: "steer" | "followUp";
+}
+
 /**
  * Context passed to extension event handlers.
  */
@@ -324,6 +329,15 @@ export interface ExtensionContext {
 	compact(options?: CompactOptions): void;
 	/** Get the current effective system prompt. */
 	getSystemPrompt(): string;
+	/** Dispatch input through the same command/skill/template pipeline as typed editor input. */
+	dispatchUserInput(input: string, options?: DispatchUserInputOptions): Promise<void>;
+
+	/** Start a new session, optionally with initialization. */
+	newSession(options?: {
+		parentSession?: string;
+		setup?: (sessionManager: SessionManager) => Promise<void>;
+		withSession?: (ctx: ReplacedSessionContext) => Promise<void>;
+	}): Promise<{ cancelled: boolean }>;
 }
 
 /**
@@ -333,13 +347,6 @@ export interface ExtensionContext {
 export interface ExtensionCommandContext extends ExtensionContext {
 	/** Wait for the agent to finish streaming */
 	waitForIdle(): Promise<void>;
-
-	/** Start a new session, optionally with initialization. */
-	newSession(options?: {
-		parentSession?: string;
-		setup?: (sessionManager: SessionManager) => Promise<void>;
-		withSession?: (ctx: ReplacedSessionContext) => Promise<void>;
-	}): Promise<{ cancelled: boolean }>;
 
 	/** Fork from a specific entry, creating a new session file. */
 	fork(
@@ -378,6 +385,8 @@ export interface ReplacedSessionContext extends ExtensionCommandContext {
 		content: string | (TextContent | ImageContent)[],
 		options?: { deliverAs?: "steer" | "followUp" },
 	): Promise<void>;
+
+	dispatchUserInput(input: string, options?: DispatchUserInputOptions): Promise<void>;
 }
 
 // ============================================================================
@@ -1414,6 +1423,8 @@ export type SendUserMessageHandler = (
 	options?: { deliverAs?: "steer" | "followUp" },
 ) => void;
 
+export type DispatchUserInputHandler = (input: string, options?: DispatchUserInputOptions) => Promise<void>;
+
 export type AppendEntryHandler = <T = unknown>(customType: string, data?: T) => void;
 
 export type SetSessionNameHandler = (name: string) => void;
@@ -1500,6 +1511,7 @@ export interface ExtensionContextActions {
 	getContextUsage: () => ContextUsage | undefined;
 	compact: (options?: CompactOptions) => void;
 	getSystemPrompt: () => string;
+	dispatchUserInput: DispatchUserInputHandler;
 }
 
 /**
