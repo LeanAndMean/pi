@@ -473,6 +473,10 @@ pi.on("before_agent_start", async (event, ctx) => {
   // event.images - attached images (if any)
   // event.systemPrompt - current chained system prompt for this handler
   //   (includes changes from earlier before_agent_start handlers)
+  // event.systemPromptSections - read-only view of the base system prompt
+  //   sections for this turn, before extension contributions; the volatile
+  //   environment tail (current date/cwd) is the section with
+  //   cacheRetention: "none"
   // event.systemPromptOptions - structured options used to build the system prompt
   //   .customPrompt - any custom system prompt (from --system-prompt, SYSTEM.md, or custom templates)
   //   .selectedTools - tools currently active in the prompt
@@ -492,6 +496,8 @@ pi.on("before_agent_start", async (event, ctx) => {
     },
     // Replace the system prompt for this turn (chained across extensions)
     systemPrompt: event.systemPrompt + "\n\nExtra instructions for this turn...",
+    // OR contribute a stable section, inserted before the volatile tail
+    systemPromptSection: { id: "my-extension", text: "\n\nMy stable directives" },
   };
 });
 ```
@@ -499,6 +505,19 @@ pi.on("before_agent_start", async (event, ctx) => {
 The `systemPromptOptions` field gives extensions access to the same structured data Pi uses to build the system prompt. This lets you inspect what Pi has loaded — custom prompts, guidelines, tool snippets, context files, skills — without re-discovering resources or re-parsing flags. Use it when your extension needs to make deep, informed changes to the system prompt while respecting user-provided configuration.
 
 Inside `before_agent_start`, `event.systemPrompt` and `ctx.getSystemPrompt()` both reflect the chained system prompt as of the current handler. Later `before_agent_start` handlers can still modify it again.
+
+##### System prompt sections
+
+Pi assembles the system prompt as ordered sections (`SystemPromptSection { id, text, cacheRetention? }` from `@earendil-works/pi-ai`) so providers can cache the stable prefix independently of the volatile tail. The last base section holds the current date and working directory and is marked `cacheRetention: "none"`; on Anthropic, everything before it is folded into a single cached system block and the volatile tail trails uncached.
+
+Returning `systemPromptSection` contributes a section for the current turn without replacing Pi's prompt assembly:
+
+- **Placement.** Contributed sections accumulate in extension load order and are inserted before the volatile tail — inside the cached stable prefix. They are spliced into a fresh copy of the base sections each turn, so they never accumulate across turns; return the section on every `before_agent_start` to keep it present.
+- **Separator contract.** Section texts are joined with no separators when the prompt is flattened, so `text` must start with its own separator (typically `\n\n`).
+- **Merge rule.** If any extension returns a legacy `systemPrompt` string, that final string replaces the whole prompt for the turn and all contributed sections are dropped — a full replacement is authoritative.
+- **Cache stability.** Keep contributed section text stable across turns. Text that changes every turn sits inside the cached prefix and would invalidate the provider prompt cache on each change; per-turn dynamic content belongs in an injected `message` instead.
+
+`event.systemPromptSections` is typed `readonly` but is a live reference, like other event fields: the same array is shared across all handlers in the turn and with Pi's base sections. Treat it as read-only — mutating it would leak into other extensions and persist across turns.
 
 #### agent_start / agent_end
 
