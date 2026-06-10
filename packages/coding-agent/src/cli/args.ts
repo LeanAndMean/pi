@@ -16,6 +16,7 @@ export interface Args {
 	systemPrompt?: string;
 	appendSystemPrompt?: string[];
 	thinking?: ThinkingLevel;
+	cacheRetention?: CliCacheRetention;
 	continue?: boolean;
 	resume?: boolean;
 	help?: boolean;
@@ -54,6 +55,15 @@ const VALID_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh
 
 export function isValidThinkingLevel(level: string): level is ThinkingLevel {
 	return VALID_THINKING_LEVELS.includes(level as ThinkingLevel);
+}
+
+const VALID_CACHE_RETENTION_VALUES = ["short", "long"] as const;
+
+/** Cache retention values accepted by the CLI flag ("none" stays SDK/env-only). */
+export type CliCacheRetention = (typeof VALID_CACHE_RETENTION_VALUES)[number];
+
+export function isValidCacheRetention(value: string): value is CliCacheRetention {
+	return VALID_CACHE_RETENTION_VALUES.includes(value as CliCacheRetention);
 }
 
 export function parseArgs(args: string[]): Args {
@@ -118,6 +128,16 @@ export function parseArgs(args: string[]): Args {
 				result.diagnostics.push({
 					type: "warning",
 					message: `Invalid thinking level "${level}". Valid values: ${VALID_THINKING_LEVELS.join(", ")}`,
+				});
+			}
+		} else if (arg === "--cache-retention" && i + 1 < args.length) {
+			const value = args[++i];
+			if (isValidCacheRetention(value)) {
+				result.cacheRetention = value;
+			} else {
+				result.diagnostics.push({
+					type: "warning",
+					message: `Invalid cache retention "${value}". Valid values: ${VALID_CACHE_RETENTION_VALUES.join(", ")}`,
 				});
 			}
 		} else if (arg === "--print" || arg === "-p") {
@@ -234,6 +254,7 @@ ${chalk.bold("Options:")}
   --tools, -t <tools>            Comma-separated allowlist of tool names to enable
                                  Applies to built-in, extension, and custom tools
   --thinking <level>             Set thinking level: off, minimal, low, medium, high, xhigh
+  --cache-retention <mode>       Prompt cache retention: long (default, 1h where supported) or short (5m)
   --extension, -e <path>         Load an extension file (can be used multiple times)
   --no-extensions, -ne           Disable extension discovery (explicit -e paths still work)
   --skill <path>                 Load a skill file or directory (can be used multiple times)
@@ -338,6 +359,7 @@ ${chalk.bold("Environment Variables:")}
   ${ENV_SESSION_DIR.padEnd(32)} - Session storage directory (overridden by --session-dir)
   PI_PACKAGE_DIR                   - Override package directory (for Nix/Guix store paths)
   PI_OFFLINE                       - Disable startup network operations when set to 1/true/yes
+  PI_CACHE_RETENTION               - Default prompt cache retention (none/short/long) when --cache-retention is not set
   PI_TELEMETRY                     - Override install telemetry when set to 1/true/yes or 0/false/no
   PI_SHARE_VIEWER_URL              - Base URL for /share command (default: https://pi.dev/session/)
 

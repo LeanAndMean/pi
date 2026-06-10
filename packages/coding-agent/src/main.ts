@@ -352,6 +352,11 @@ function buildSessionOptions(
 		options.thinkingLevel = parsed.thinking;
 	}
 
+	// Cache retention from CLI (PI_CACHE_RETENTION and the default are resolved by the SDK)
+	if (parsed.cacheRetention) {
+		options.cacheRetention = parsed.cacheRetention;
+	}
+
 	// Scoped models for Ctrl+P cycling
 	// Keep thinking level undefined when not explicitly set in the model pattern.
 	// Undefined means "inherit current session thinking level" during cycling.
@@ -589,6 +594,7 @@ export async function main(args: string[], options?: MainOptions) {
 			model: sessionOptions.model,
 			thinkingLevel: sessionOptions.thinkingLevel,
 			scopedModels: sessionOptions.scopedModels,
+			cacheRetention: sessionOptions.cacheRetention,
 			tools: sessionOptions.tools,
 			noTools: sessionOptions.noTools,
 			customTools: sessionOptions.customTools,

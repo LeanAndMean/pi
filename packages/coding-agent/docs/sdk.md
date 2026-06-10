@@ -388,6 +388,7 @@ const available = await modelRegistry.getAvailable();
 const { session } = await createAgentSession({
   model: opus,
   thinkingLevel: "medium", // off, minimal, low, medium, high, xhigh
+  cacheRetention: "long", // none, short, long (default: long)
   
   // Models for cycling (Ctrl+P in interactive mode)
   scopedModels: [
@@ -404,6 +405,10 @@ If no model is provided:
 1. Tries to restore from session (if continuing)
 2. Uses default from settings
 3. Falls back to first available model
+
+`cacheRetention` controls prompt-cache retention on providers that support it (Anthropic: `long` -> 1h cache TTL where the model supports it, `short` -> the default 5m TTL, `none` -> no caching). Precedence: the `cacheRetention` option (or the `--cache-retention` CLI flag), then the `PI_CACHE_RETENTION` environment variable, then the built-in default `long`. Short-lived sessions such as subagents should pass `short` since a 1h cache write costs more than a 5m one and rarely pays off for a single run.
+
+> Before sectioned system prompts landed, the effective default was `short` (the env var could only upgrade it to `long`). Sessions created through the SDK or CLI now default to `long`; set `PI_CACHE_RETENTION=short` or pass `cacheRetention: "short"` to restore the old behavior.
 
 > See [examples/sdk/02-custom-model.ts](../examples/sdk/02-custom-model.ts)
 
