@@ -5,6 +5,7 @@ import type {
 	MessageCreateParamsStreaming,
 	MessageParam,
 	RawMessageStreamEvent,
+	TextBlockParam,
 } from "@anthropic-ai/sdk/resources/messages.js";
 import { getEnvApiKey } from "../env-api-keys.js";
 import { calculateCost } from "../models.js";
@@ -21,6 +22,7 @@ import type {
 	StopReason,
 	StreamFunction,
 	StreamOptions,
+	SystemPromptSection,
 	TextContent,
 	ThinkingContent,
 	Tool,
@@ -31,7 +33,6 @@ import { AssistantMessageEventStream } from "../utils/event-stream.js";
 import { headersToRecord } from "../utils/headers.js";
 import { parseJsonWithRepair, parseStreamingJson } from "../utils/json-parse.js";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
-import { flattenSystemPrompt } from "../utils/system-prompt.js";
 
 import { resolveCloudflareBaseUrl } from "./cloudflare.js";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.js";
@@ -866,6 +867,52 @@ function createClient(
 	return { client, isOAuthToken: false };
 }
 
+const claudeCodeIdentity = "You are Claude Code, Anthropic's official CLI for Claude.";
+
+/**
+ * Builds the system block array for a sectioned system prompt.
+ *
+ * Anthropic allows at most 4 `cache_control` breakpoints per request, and the
+ * last tool and last user message already consume two, so the system prompt
+ * must spend exactly one: it lands on the single stable block (all sections
+ * except `cacheRetention: "none"`, folded together so the cached prefix stays
+ * byte-identical to the flattened prompt). Volatile sections trail as
+ * uncached blocks — anything after the breakpoint is excluded from the cached
+ * prefix. On OAuth the Claude Code identity block stays first; caching is
+ * prefix-based, so the stable block's breakpoint covers it without a second
+ * one (unlike the legacy string path, which marks both for back-compat).
+ */
+function buildSystemBlocks(
+	sections: SystemPromptSection[],
+	isOAuthToken: boolean,
+	cacheControl?: CacheControlEphemeral,
+): TextBlockParam[] {
+	const blocks: TextBlockParam[] = [];
+	const stable = sections.filter((s) => s.cacheRetention !== "none" && s.text);
+	const volatile = sections.filter((s) => s.cacheRetention === "none" && s.text);
+
+	if (isOAuthToken) {
+		blocks.push({
+			type: "text",
+			text: claudeCodeIdentity,
+			// Without stable sections the identity block is the whole stable
+			// prefix, so the breakpoint lands here (as on the string path).
+			...(stable.length === 0 && cacheControl ? { cache_control: cacheControl } : {}),
+		});
+	}
+	if (stable.length > 0) {
+		blocks.push({
+			type: "text",
+			text: sanitizeSurrogates(stable.map((s) => s.text).join("")),
+			...(cacheControl ? { cache_control: cacheControl } : {}),
+		});
+	}
+	for (const section of volatile) {
+		blocks.push({ type: "text", text: sanitizeSurrogates(section.text) });
+	}
+	return blocks;
+}
+
 function buildParams(
 	model: Model<"anthropic-messages">,
 	context: Context,
@@ -880,33 +927,40 @@ function buildParams(
 		stream: true,
 	};
 
-	const systemPrompt = flattenSystemPrompt(context.systemPrompt);
-
-	// For OAuth tokens, we MUST include Claude Code identity
-	if (isOAuthToken) {
-		params.system = [
-			{
-				type: "text",
-				text: "You are Claude Code, Anthropic's official CLI for Claude.",
-				...(cacheControl ? { cache_control: cacheControl } : {}),
-			},
-		];
-		if (systemPrompt) {
-			params.system.push({
-				type: "text",
-				text: sanitizeSurrogates(systemPrompt),
-				...(cacheControl ? { cache_control: cacheControl } : {}),
-			});
+	if (Array.isArray(context.systemPrompt)) {
+		const blocks = buildSystemBlocks(context.systemPrompt, isOAuthToken, cacheControl);
+		if (blocks.length > 0) {
+			params.system = blocks;
 		}
-	} else if (systemPrompt) {
-		// Add cache control to system prompt for non-OAuth tokens
-		params.system = [
-			{
-				type: "text",
-				text: sanitizeSurrogates(systemPrompt),
-				...(cacheControl ? { cache_control: cacheControl } : {}),
-			},
-		];
+	} else {
+		const systemPrompt = context.systemPrompt;
+
+		// For OAuth tokens, we MUST include Claude Code identity
+		if (isOAuthToken) {
+			params.system = [
+				{
+					type: "text",
+					text: claudeCodeIdentity,
+					...(cacheControl ? { cache_control: cacheControl } : {}),
+				},
+			];
+			if (systemPrompt) {
+				params.system.push({
+					type: "text",
+					text: sanitizeSurrogates(systemPrompt),
+					...(cacheControl ? { cache_control: cacheControl } : {}),
+				});
+			}
+		} else if (systemPrompt) {
+			// Add cache control to system prompt for non-OAuth tokens
+			params.system = [
+				{
+					type: "text",
+					text: sanitizeSurrogates(systemPrompt),
+					...(cacheControl ? { cache_control: cacheControl } : {}),
+				},
+			];
+		}
 	}
 
 	// Temperature is incompatible with extended thinking (adaptive or budget-based).
