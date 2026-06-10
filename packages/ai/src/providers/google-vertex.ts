@@ -24,6 +24,7 @@ import type {
 } from "../types.js";
 import { AssistantMessageEventStream } from "../utils/event-stream.js";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
+import { flattenSystemPrompt } from "../utils/system-prompt.js";
 import type { GoogleThinkingLevel } from "./google-shared.js";
 import {
 	convertMessages,
@@ -439,9 +440,10 @@ function buildParams(
 		generationConfig.maxOutputTokens = options.maxTokens;
 	}
 
+	const systemPrompt = flattenSystemPrompt(context.systemPrompt);
 	const config: GenerateContentConfig = {
 		...(Object.keys(generationConfig).length > 0 && generationConfig),
-		...(context.systemPrompt && { systemInstruction: sanitizeSurrogates(context.systemPrompt) }),
+		...(systemPrompt && { systemInstruction: sanitizeSurrogates(systemPrompt) }),
 		...(context.tools && context.tools.length > 0 && { tools: convertTools(context.tools) }),
 	};
 

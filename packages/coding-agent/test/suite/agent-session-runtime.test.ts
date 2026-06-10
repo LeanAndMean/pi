@@ -11,7 +11,6 @@ import {
 } from "../../src/core/agent-session-runtime.js";
 import { AuthStorage } from "../../src/core/auth-storage.js";
 import { SessionManager } from "../../src/core/session-manager.js";
-import { initTheme } from "../../src/modes/interactive/theme/theme.js";
 import type {
 	ExtensionAPI,
 	ExtensionFactory,
@@ -20,6 +19,7 @@ import type {
 	SessionShutdownEvent,
 	SessionStartEvent,
 } from "../../src/index.js";
+import { initTheme } from "../../src/modes/interactive/theme/theme.js";
 
 type RecordedSessionEvent =
 	| SessionBeforeSwitchEvent

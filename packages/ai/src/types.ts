@@ -252,8 +252,24 @@ export interface Tool<TParameters extends TSchema = TSchema> {
 	parameters: TParameters;
 }
 
+/**
+ * One ordered section of a structured system prompt.
+ *
+ * Each section's `text` must include its own leading separator, so that
+ * concatenating all sections produces the equivalent single-string prompt.
+ */
+export interface SystemPromptSection {
+	id: string;
+	text: string;
+	/**
+	 * Cache retention for this section. "none" marks volatile content that
+	 * providers should exclude from the stable cached prefix.
+	 */
+	cacheRetention?: CacheRetention;
+}
+
 export interface Context {
-	systemPrompt?: string;
+	systemPrompt?: string | SystemPromptSection[];
 	messages: Message[];
 	tools?: Tool[];
 }

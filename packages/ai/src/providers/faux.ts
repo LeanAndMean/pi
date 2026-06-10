@@ -16,6 +16,7 @@ import type {
 	Usage,
 } from "../types.js";
 import { createAssistantMessageEventStream } from "../utils/event-stream.js";
+import { flattenSystemPrompt } from "../utils/system-prompt.js";
 
 const DEFAULT_API = "faux";
 const DEFAULT_PROVIDER = "faux";
@@ -177,8 +178,9 @@ function messageToText(message: Message): string {
 
 function serializeContext(context: Context): string {
 	const parts: string[] = [];
-	if (context.systemPrompt) {
-		parts.push(`system:${context.systemPrompt}`);
+	const systemPrompt = flattenSystemPrompt(context.systemPrompt);
+	if (systemPrompt) {
+		parts.push(`system:${systemPrompt}`);
 	}
 	for (const message of context.messages) {
 		parts.push(`${message.role}:${messageToText(message)}`);

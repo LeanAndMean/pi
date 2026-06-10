@@ -40,7 +40,6 @@ export type {
 	BuildSystemPromptOptions,
 	// Context
 	CompactOptions,
-	DispatchUserInputOptions,
 	// Events - Agent
 	ContextEvent,
 	// Event Results
@@ -48,6 +47,8 @@ export type {
 	ContextUsage,
 	CustomToolCallEvent,
 	CustomToolResultEvent,
+	DispatchUserInputHandler,
+	DispatchUserInputOptions,
 	EditorFactory,
 	EditToolCallEvent,
 	EditToolResultEvent,
@@ -111,7 +112,6 @@ export type {
 	// Events - Resources
 	ResourcesDiscoverEvent,
 	ResourcesDiscoverResult,
-	DispatchUserInputHandler,
 	SendMessageHandler,
 	SendUserMessageHandler,
 	SessionBeforeCompactEvent,

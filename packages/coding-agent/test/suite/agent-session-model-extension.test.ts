@@ -1,5 +1,5 @@
 import type { AgentTool, ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { fauxAssistantMessage, fauxToolCall, type Model } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxToolCall, flattenSystemPrompt, type Model } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ExtensionAPI } from "../../src/index.js";
@@ -281,7 +281,7 @@ describe("AgentSession model and extension characterization", () => {
 		let sawInjectedUserMessage = false;
 		harness.setResponses([
 			(context) => {
-				providerSystemPrompt = context.systemPrompt ?? "";
+				providerSystemPrompt = flattenSystemPrompt(context.systemPrompt) ?? "";
 				sawInjectedUserMessage = context.messages.some(
 					(message) =>
 						message.role === "user" &&

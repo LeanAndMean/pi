@@ -31,6 +31,7 @@ import { AssistantMessageEventStream } from "../utils/event-stream.js";
 import { headersToRecord } from "../utils/headers.js";
 import { parseJsonWithRepair, parseStreamingJson } from "../utils/json-parse.js";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
+import { flattenSystemPrompt } from "../utils/system-prompt.js";
 
 import { resolveCloudflareBaseUrl } from "./cloudflare.js";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.js";
@@ -879,6 +880,8 @@ function buildParams(
 		stream: true,
 	};
 
+	const systemPrompt = flattenSystemPrompt(context.systemPrompt);
+
 	// For OAuth tokens, we MUST include Claude Code identity
 	if (isOAuthToken) {
 		params.system = [
@@ -888,19 +891,19 @@ function buildParams(
 				...(cacheControl ? { cache_control: cacheControl } : {}),
 			},
 		];
-		if (context.systemPrompt) {
+		if (systemPrompt) {
 			params.system.push({
 				type: "text",
-				text: sanitizeSurrogates(context.systemPrompt),
+				text: sanitizeSurrogates(systemPrompt),
 				...(cacheControl ? { cache_control: cacheControl } : {}),
 			});
 		}
-	} else if (context.systemPrompt) {
+	} else if (systemPrompt) {
 		// Add cache control to system prompt for non-OAuth tokens
 		params.system = [
 			{
 				type: "text",
-				text: sanitizeSurrogates(context.systemPrompt),
+				text: sanitizeSurrogates(systemPrompt),
 				...(cacheControl ? { cache_control: cacheControl } : {}),
 			},
 		];

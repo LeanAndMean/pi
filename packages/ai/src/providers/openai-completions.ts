@@ -34,6 +34,7 @@ import { AssistantMessageEventStream } from "../utils/event-stream.js";
 import { headersToRecord } from "../utils/headers.js";
 import { parseStreamingJson } from "../utils/json-parse.js";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
+import { flattenSystemPrompt } from "../utils/system-prompt.js";
 import { isCloudflareProvider, resolveCloudflareBaseUrl } from "./cloudflare.js";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.js";
 import { buildBaseOptions } from "./simple-options.js";
@@ -743,10 +744,11 @@ export function convertMessages(
 
 	const transformedMessages = transformMessages(context.messages, model, (id) => normalizeToolCallId(id));
 
-	if (context.systemPrompt) {
+	const systemPrompt = flattenSystemPrompt(context.systemPrompt);
+	if (systemPrompt) {
 		const useDeveloperRole = model.reasoning && compat.supportsDeveloperRole;
 		const role = useDeveloperRole ? "developer" : "system";
-		params.push({ role: role, content: sanitizeSurrogates(context.systemPrompt) });
+		params.push({ role: role, content: sanitizeSurrogates(systemPrompt) });
 	}
 
 	let lastRole: string | null = null;
