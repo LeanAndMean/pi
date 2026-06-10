@@ -593,7 +593,7 @@ describe("ExtensionRunner", () => {
 			runner.onError((error) => errors.push(error.error));
 			runner.bindCore(extensionActions, extensionContextActions);
 
-			const chained = await runner.emitBeforeAgentStart("hello", undefined, "base", {
+			const chained = await runner.emitBeforeAgentStart("hello", undefined, [{ id: "core", text: "base" }], {
 				cwd: tempDir,
 			});
 
@@ -602,6 +602,62 @@ describe("ExtensionRunner", () => {
 			expect(chained).toEqual({
 				messages: undefined,
 				systemPrompt: "base\nfirst\nsecond",
+				systemPromptSections: undefined,
+			});
+		});
+
+		it("accumulates contributed sections in load order and exposes the base sections on the event", async () => {
+			const extCode1 = `
+				export default function(pi) {
+					pi.on("before_agent_start", async (event) => {
+						return {
+							systemPromptSection: {
+								id: "ext-one",
+								text: "\\n\\none (saw " + event.systemPromptSections.map((s) => s.id).join(",") + ")",
+							},
+						};
+					});
+				}
+			`;
+			const extCode2 = `
+				export default function(pi) {
+					pi.on("before_agent_start", async () => {
+						return {
+							systemPromptSection: { id: "ext-two", text: "\\n\\ntwo", cacheRetention: "none" },
+						};
+					});
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "before-agent-start-sections-1.ts"), extCode1);
+			fs.writeFileSync(path.join(extensionsDir, "before-agent-start-sections-2.ts"), extCode2);
+
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			expect(result.errors).toEqual([]);
+			expect(result.extensions).toHaveLength(2);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			const errors: string[] = [];
+			runner.onError((error) => errors.push(error.error));
+			runner.bindCore(extensionActions, extensionContextActions);
+
+			const combined = await runner.emitBeforeAgentStart(
+				"hello",
+				undefined,
+				[
+					{ id: "core", text: "base" },
+					{ id: "volatile", text: "\ndate", cacheRetention: "none" },
+				],
+				{ cwd: tempDir },
+			);
+
+			expect(errors).toEqual([]);
+
+			expect(combined).toEqual({
+				messages: undefined,
+				systemPrompt: undefined,
+				systemPromptSections: [
+					{ id: "ext-one", text: "\n\none (saw core,volatile)" },
+					{ id: "ext-two", text: "\n\ntwo", cacheRetention: "none" },
+				],
 			});
 		});
 	});

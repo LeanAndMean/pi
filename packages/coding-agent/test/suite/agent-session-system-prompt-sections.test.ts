@@ -118,3 +118,126 @@ describe("AgentSession sectioned system prompt", () => {
 		expect(sections[sections.length - 1]!.id).toBe("volatile");
 	});
 });
+
+describe("AgentSession extension-contributed sections", () => {
+	const harnesses: Harness[] = [];
+
+	afterEach(() => {
+		while (harnesses.length > 0) {
+			harnesses.pop()?.cleanup();
+		}
+	});
+
+	it("places a contributed section before the volatile tail and inside the cached prefix", async () => {
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.on("before_agent_start", async () => ({
+						systemPromptSection: { id: "ext-base", text: "\n\nExtension directives" },
+					}));
+				},
+			],
+		});
+		harnesses.push(harness);
+		const captured = captureSystemPrompt(harness);
+
+		await harness.session.prompt("hello");
+
+		expect(Array.isArray(captured.current)).toBe(true);
+		const sections = captured.current as SystemPromptSection[];
+		const extIndex = sections.findIndex((s) => s.id === "ext-base");
+		const volatileIndex = sections.findIndex((s) => s.id === "volatile");
+		expect(extIndex).toBeGreaterThan(-1);
+		expect(volatileIndex).toBe(sections.length - 1);
+		expect(extIndex).toBe(volatileIndex - 1);
+		// Not marked volatile, so the section is part of the cached stable prefix.
+		expect(sections[extIndex]!.cacheRetention).not.toBe("none");
+		expect(harness.session.systemPrompt).toContain("Extension directives");
+	});
+
+	it("accumulates sections from multiple extensions in load order", async () => {
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.on("before_agent_start", async () => ({
+						systemPromptSection: { id: "ext-one", text: "\n\none" },
+					}));
+				},
+				(pi) => {
+					pi.on("before_agent_start", async () => ({
+						systemPromptSection: { id: "ext-two", text: "\n\ntwo" },
+					}));
+				},
+			],
+		});
+		harnesses.push(harness);
+		const captured = captureSystemPrompt(harness);
+
+		await harness.session.prompt("hello");
+
+		const sections = captured.current as SystemPromptSection[];
+		const ids = sections.map((s) => s.id);
+		const oneIndex = ids.indexOf("ext-one");
+		expect(oneIndex).toBeGreaterThan(-1);
+		expect(ids[oneIndex + 1]).toBe("ext-two");
+		expect(ids[ids.length - 1]).toBe("volatile");
+	});
+
+	it("drops contributed sections when another extension returns a string replacement", async () => {
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.on("before_agent_start", async () => ({
+						systemPromptSection: { id: "ext-dropped", text: "\n\ndropped" },
+					}));
+				},
+				(pi) => {
+					pi.on("before_agent_start", async () => ({
+						systemPrompt: "authoritative replacement",
+					}));
+				},
+			],
+		});
+		harnesses.push(harness);
+		const captured = captureSystemPrompt(harness);
+
+		await harness.session.prompt("hello");
+
+		expect(captured.current).toBe("authoritative replacement");
+		expect(harness.session.systemPrompt).toBe("authoritative replacement");
+	});
+
+	it("splices into a fresh copy each turn so sections do not accumulate", async () => {
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.on("before_agent_start", async () => ({
+						systemPromptSection: { id: "ext-fresh", text: "\n\nfresh" },
+					}));
+				},
+			],
+		});
+		harnesses.push(harness);
+
+		const capturedPrompts: Array<Context["systemPrompt"]> = [];
+		harness.setResponses([
+			(context) => {
+				capturedPrompts.push(context.systemPrompt);
+				return fauxAssistantMessage("first");
+			},
+			(context) => {
+				capturedPrompts.push(context.systemPrompt);
+				return fauxAssistantMessage("second");
+			},
+		]);
+
+		await harness.session.prompt("hello");
+		await harness.session.prompt("again");
+
+		const firstTurn = capturedPrompts[0] as SystemPromptSection[];
+		const secondTurn = capturedPrompts[1] as SystemPromptSection[];
+		expect(firstTurn.filter((s) => s.id === "ext-fresh")).toHaveLength(1);
+		expect(secondTurn.filter((s) => s.id === "ext-fresh")).toHaveLength(1);
+		expect(secondTurn.map((s) => s.id)).toEqual(firstTurn.map((s) => s.id));
+	});
+});

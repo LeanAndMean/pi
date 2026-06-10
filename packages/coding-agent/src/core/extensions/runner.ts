@@ -3,7 +3,8 @@
  */
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { ImageContent, Model } from "@earendil-works/pi-ai";
+import type { ImageContent, Model, SystemPromptSection } from "@earendil-works/pi-ai";
+import { flattenSystemPrompt } from "@earendil-works/pi-ai";
 import type { KeyId } from "@earendil-works/pi-tui";
 import { type Theme, theme } from "../../modes/interactive/theme/theme.js";
 import type { ResourceDiagnostic } from "../diagnostics.js";
@@ -107,6 +108,8 @@ const buildBuiltinKeybindings = (resolvedKeybindings: KeybindingsConfig): BuiltI
 interface BeforeAgentStartCombinedResult {
 	messages?: NonNullable<BeforeAgentStartEventResult["message"]>[];
 	systemPrompt?: string;
+	/** Sections contributed via `systemPromptSection`, in extension load order. */
+	systemPromptSections?: SystemPromptSection[];
 }
 
 /**
@@ -931,10 +934,10 @@ export class ExtensionRunner {
 	async emitBeforeAgentStart(
 		prompt: string,
 		images: ImageContent[] | undefined,
-		systemPrompt: string,
+		systemPromptSections: SystemPromptSection[],
 		systemPromptOptions: BuildSystemPromptOptions,
 	): Promise<BeforeAgentStartCombinedResult | undefined> {
-		let currentSystemPrompt = systemPrompt;
+		let currentSystemPrompt = flattenSystemPrompt(systemPromptSections);
 		const ctx = Object.defineProperties(
 			{},
 			Object.getOwnPropertyDescriptors(this.createContext()),
@@ -944,6 +947,7 @@ export class ExtensionRunner {
 			return currentSystemPrompt;
 		};
 		const messages: NonNullable<BeforeAgentStartEventResult["message"]>[] = [];
+		const contributedSections: SystemPromptSection[] = [];
 		let systemPromptModified = false;
 
 		for (const ext of this.extensions) {
@@ -957,6 +961,7 @@ export class ExtensionRunner {
 						prompt,
 						images,
 						systemPrompt: currentSystemPrompt,
+						systemPromptSections,
 						systemPromptOptions,
 					};
 					const handlerResult = await handler(event, ctx);
@@ -969,6 +974,9 @@ export class ExtensionRunner {
 						if (result.systemPrompt !== undefined) {
 							currentSystemPrompt = result.systemPrompt;
 							systemPromptModified = true;
+						}
+						if (result.systemPromptSection) {
+							contributedSections.push(result.systemPromptSection);
 						}
 					}
 				} catch (err) {
@@ -984,10 +992,11 @@ export class ExtensionRunner {
 			}
 		}
 
-		if (messages.length > 0 || systemPromptModified) {
+		if (messages.length > 0 || systemPromptModified || contributedSections.length > 0) {
 			return {
 				messages: messages.length > 0 ? messages : undefined,
 				systemPrompt: systemPromptModified ? currentSystemPrompt : undefined,
+				systemPromptSections: contributedSections.length > 0 ? contributedSections : undefined,
 			};
 		}
 

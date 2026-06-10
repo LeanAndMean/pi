@@ -1085,7 +1085,7 @@ export class AgentSession {
 			const result = await this._extensionRunner.emitBeforeAgentStart(
 				expandedText,
 				currentImages,
-				flattenSystemPrompt(this._baseSystemPromptSections),
+				this._baseSystemPromptSections,
 				this._baseSystemPromptOptions,
 			);
 			// Add all custom messages from extensions
@@ -1101,9 +1101,19 @@ export class AgentSession {
 					});
 				}
 			}
-			// Apply extension-modified system prompt, or reset to base
+			// Apply extension-modified system prompt, or reset to base. A string
+			// replacement is authoritative: it wins for the whole prompt and any
+			// contributed sections are dropped for this turn.
 			if (result?.systemPrompt) {
 				this.agent.state.systemPrompt = result.systemPrompt;
+			} else if (result?.systemPromptSections) {
+				// Splice contributed sections into a fresh copy of the base,
+				// before the volatile environment tail.
+				const sections = this._baseSystemPromptSections.slice();
+				const volatileIndex = sections.findIndex((s) => s.cacheRetention === "none");
+				const insertAt = volatileIndex === -1 ? sections.length : volatileIndex;
+				sections.splice(insertAt, 0, ...result.systemPromptSections);
+				this.agent.state.systemPrompt = sections;
 			} else {
 				// Ensure we're using the base prompt (in case previous turn had modifications)
 				this.agent.state.systemPrompt = this._baseSystemPromptSections.slice();

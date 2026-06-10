@@ -25,6 +25,7 @@ import type {
 	OAuthCredentials,
 	OAuthLoginCallbacks,
 	SimpleStreamOptions,
+	SystemPromptSection,
 	TextContent,
 	ToolResultMessage,
 } from "@earendil-works/pi-ai";
@@ -638,6 +639,8 @@ export interface BeforeAgentStartEvent {
 	images?: ImageContent[];
 	/** The fully assembled system prompt string. */
 	systemPrompt: string;
+	/** Read-only view of the base system prompt sections for this turn, before extension contributions. The volatile environment tail is the section with `cacheRetention: "none"`. */
+	systemPromptSections: readonly SystemPromptSection[];
 	/** Structured options used to build the system prompt. Extensions can inspect this to understand what Pi loaded without re-discovering resources. */
 	systemPromptOptions: BuildSystemPromptOptions;
 }
@@ -1017,8 +1020,10 @@ export interface MessageEndEventResult {
 
 export interface BeforeAgentStartEventResult {
 	message?: Pick<CustomMessage, "customType" | "content" | "display" | "details">;
-	/** Replace the system prompt for this turn. If multiple extensions return this, they are chained. */
+	/** Replace the system prompt for this turn. If multiple extensions return this, they are chained. If any extension returns this, the final string wins for the whole prompt and all contributed `systemPromptSection`s are dropped for the turn. */
 	systemPrompt?: string;
+	/** Contribute a system prompt section for this turn. Sections accumulate in extension load order and are inserted before the volatile environment tail. Section texts are joined without separators, so `text` should start with its own separator (typically `\n\n`). */
+	systemPromptSection?: SystemPromptSection;
 }
 
 export interface SessionBeforeSwitchResult {
