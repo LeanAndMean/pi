@@ -23,10 +23,18 @@ import type {
 	AgentTool,
 	ThinkingLevel,
 } from "@earendil-works/pi-agent-core";
-import type { AssistantMessage, ImageContent, Message, Model, TextContent } from "@earendil-works/pi-ai";
+import type {
+	AssistantMessage,
+	ImageContent,
+	Message,
+	Model,
+	SystemPromptSection,
+	TextContent,
+} from "@earendil-works/pi-ai";
 import {
 	clampThinkingLevel,
 	cleanupSessionResources,
+	flattenSystemPrompt,
 	getSupportedThinkingLevels,
 	isContextOverflow,
 	modelsAreEqual,
@@ -86,7 +94,7 @@ import { CURRENT_SESSION_VERSION, getLatestCompactionEntry, type SessionHeader }
 import type { SettingsManager } from "./settings-manager.js";
 import type { SlashCommandInfo } from "./slash-commands.js";
 import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.js";
-import { type BuildSystemPromptOptions, buildSystemPrompt } from "./system-prompt.js";
+import { type BuildSystemPromptOptions, buildSystemPromptSections } from "./system-prompt.js";
 import { type BashOperations, createLocalBashOperations } from "./tools/bash.js";
 import { createAllToolDefinitions } from "./tools/index.js";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.js";
@@ -307,8 +315,10 @@ export class AgentSession {
 	private _toolPromptSnippets: Map<string, string> = new Map();
 	private _toolPromptGuidelines: Map<string, string[]> = new Map();
 
-	// Base system prompt (without extension appends) - used to apply fresh appends each turn
-	private _baseSystemPrompt = "";
+	// Base system prompt as ordered sections (without extension appends) - used to
+	// apply fresh appends each turn. Sent to the agent as sections so providers
+	// can apply per-section cache control.
+	private _baseSystemPromptSections: SystemPromptSection[] = [];
 	private _baseSystemPromptOptions!: BuildSystemPromptOptions;
 
 	constructor(config: AgentSessionConfig) {
@@ -781,9 +791,9 @@ export class AgentSession {
 		return this.agent.state.isStreaming;
 	}
 
-	/** Current effective system prompt (includes any per-turn extension modifications) */
+	/** Current effective system prompt (includes any per-turn extension modifications), flattened to a string */
 	get systemPrompt(): string {
-		return this.agent.state.systemPrompt;
+		return flattenSystemPrompt(this.agent.state.systemPrompt);
 	}
 
 	/** Current retry attempt (0 if not retrying) */
@@ -834,8 +844,7 @@ export class AgentSession {
 		this.agent.state.tools = tools;
 
 		// Rebuild base system prompt with new tool set
-		this._baseSystemPrompt = this._rebuildSystemPrompt(validToolNames);
-		this.agent.state.systemPrompt = this._baseSystemPrompt;
+		this._rebuildSystemPrompt(validToolNames);
 	}
 
 	/** Whether compaction or branch summarization is currently running */
@@ -916,7 +925,8 @@ export class AgentSession {
 		return Array.from(unique);
 	}
 
-	private _rebuildSystemPrompt(toolNames: string[]): string {
+	/** Rebuild `_baseSystemPromptSections` from the current resources and tool set and apply it to agent state. */
+	private _rebuildSystemPrompt(toolNames: string[]): void {
 		const validToolNames = toolNames.filter((name) => this._toolRegistry.has(name));
 		const toolSnippets: Record<string, string> = {};
 		const promptGuidelines: string[] = [];
@@ -949,7 +959,8 @@ export class AgentSession {
 			toolSnippets,
 			promptGuidelines,
 		};
-		return buildSystemPrompt(this._baseSystemPromptOptions);
+		this._baseSystemPromptSections = buildSystemPromptSections(this._baseSystemPromptOptions);
+		this.agent.state.systemPrompt = this._baseSystemPromptSections.slice();
 	}
 
 	// =========================================================================
@@ -1074,7 +1085,7 @@ export class AgentSession {
 			const result = await this._extensionRunner.emitBeforeAgentStart(
 				expandedText,
 				currentImages,
-				this._baseSystemPrompt,
+				flattenSystemPrompt(this._baseSystemPromptSections),
 				this._baseSystemPromptOptions,
 			);
 			// Add all custom messages from extensions
@@ -1095,7 +1106,7 @@ export class AgentSession {
 				this.agent.state.systemPrompt = result.systemPrompt;
 			} else {
 				// Ensure we're using the base prompt (in case previous turn had modifications)
-				this.agent.state.systemPrompt = this._baseSystemPrompt;
+				this.agent.state.systemPrompt = this._baseSystemPromptSections.slice();
 			}
 		} catch (error) {
 			preflightResult?.(false);
@@ -2081,8 +2092,7 @@ export class AgentSession {
 		};
 
 		this._resourceLoader.extendResources(extensionPaths);
-		this._baseSystemPrompt = this._rebuildSystemPrompt(this.getActiveToolNames());
-		this.agent.state.systemPrompt = this._baseSystemPrompt;
+		this._rebuildSystemPrompt(this.getActiveToolNames());
 	}
 
 	private buildExtensionResourcePaths(entries: Array<{ path: string; extensionPath: string }>): Array<{

@@ -5,6 +5,7 @@ import type {
 	Message,
 	Model,
 	SimpleStreamOptions,
+	SystemPromptSection,
 	streamSimple,
 	TextContent,
 	Tool,
@@ -287,7 +288,7 @@ export type AgentMessage = Message | CustomAgentMessages[keyof CustomAgentMessag
  */
 export interface AgentState {
 	/** System prompt sent with each model request. */
-	systemPrompt: string;
+	systemPrompt: string | SystemPromptSection[];
 	/** Active model used for future turns. */
 	model: Model<any>;
 	/** Requested reasoning level for future turns. */
@@ -357,7 +358,7 @@ export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = any
 /** Context snapshot passed into the low-level agent loop. */
 export interface AgentContext {
 	/** System prompt included with the request. */
-	systemPrompt: string;
+	systemPrompt: string | SystemPromptSection[];
 	/** Transcript visible to the model. */
 	messages: AgentMessage[];
 	/** Tools available for this run. */

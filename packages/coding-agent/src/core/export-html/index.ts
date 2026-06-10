@@ -1,4 +1,5 @@
 import type { AgentState } from "@earendil-works/pi-agent-core";
+import { flattenSystemPrompt } from "@earendil-works/pi-ai";
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import { basename, join } from "path";
 import { APP_NAME, getExportTemplateDir } from "../../config.js";
@@ -263,7 +264,7 @@ export async function exportSessionToHtml(
 		header: sm.getHeader(),
 		entries,
 		leafId: sm.getLeafId(),
-		systemPrompt: state?.systemPrompt,
+		systemPrompt: flattenSystemPrompt(state?.systemPrompt),
 		tools: state?.tools?.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters })),
 		renderedTools,
 	};
