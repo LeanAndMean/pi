@@ -207,6 +207,59 @@ describe("AgentSession extension-contributed sections", () => {
 		expect(harness.session.systemPrompt).toBe("authoritative replacement");
 	});
 
+	it("treats an empty-string replacement as authoritative over contributed sections", async () => {
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.on("before_agent_start", async () => ({
+						systemPromptSection: { id: "ext-dropped", text: "\n\ndropped" },
+					}));
+				},
+				(pi) => {
+					pi.on("before_agent_start", async () => ({
+						systemPrompt: "",
+					}));
+				},
+			],
+		});
+		harnesses.push(harness);
+		const captured = captureSystemPrompt(harness);
+
+		await harness.session.prompt("hello");
+
+		expect(captured.current).toBe("");
+		expect(harness.session.systemPrompt).toBe("");
+	});
+
+	it("exposes earlier contributed sections to later handlers via event.systemPrompt and ctx.getSystemPrompt", async () => {
+		let seenEventPrompt = "";
+		let seenCtxPrompt = "";
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.on("before_agent_start", async () => ({
+						systemPromptSection: { id: "ext-early", text: "\n\nEarly directives" },
+					}));
+				},
+				(pi) => {
+					pi.on("before_agent_start", async (event, ctx) => {
+						seenEventPrompt = event.systemPrompt;
+						seenCtxPrompt = ctx.getSystemPrompt();
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		const captured = captureSystemPrompt(harness);
+
+		await harness.session.prompt("hello");
+
+		expect(seenEventPrompt).toContain("Early directives");
+		expect(seenCtxPrompt).toContain("Early directives");
+		// The chained prompt matches the flattened sections actually sent.
+		expect(seenEventPrompt).toBe(flattenSystemPrompt(captured.current as SystemPromptSection[]));
+	});
+
 	it("splices into a fresh copy each turn so sections do not accumulate", async () => {
 		const harness = await createHarness({
 			extensionFactories: [

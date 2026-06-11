@@ -512,7 +512,7 @@ Pi assembles the system prompt as ordered sections (`SystemPromptSection { id, t
 
 Returning `systemPromptSection` contributes a section for the current turn without replacing Pi's prompt assembly:
 
-- **Placement.** Contributed sections accumulate in extension load order and are inserted before the volatile tail — inside the cached stable prefix. They are spliced into a fresh copy of the base sections each turn, so they never accumulate across turns; return the section on every `before_agent_start` to keep it present.
+- **Placement.** Contributed sections accumulate in extension load order and are inserted before the volatile tail — inside the cached stable prefix. They are spliced into a fresh copy of the base sections each turn, so they never accumulate across turns; return the section on every `before_agent_start` to keep it present. Contributions are folded into the chained prompt, so later `before_agent_start` handlers see them in `event.systemPrompt` and `ctx.getSystemPrompt()`.
 - **Separator contract.** Section texts are joined with no separators when the prompt is flattened, so `text` must start with its own separator (typically `\n\n`).
 - **Merge rule.** If any extension returns a legacy `systemPrompt` string, that final string replaces the whole prompt for the turn and all contributed sections are dropped — a full replacement is authoritative.
 - **Cache stability.** Keep contributed section text stable across turns. Text that changes every turn sits inside the cached prefix and would invalidate the provider prompt cache on each change; per-turn dynamic content belongs in an injected `message` instead.
@@ -990,22 +990,22 @@ pi.on("before_agent_start", (event, ctx) => {
 });
 ```
 
-## ExtensionCommandContext
+### ctx.dispatchUserInput(input, options?)
 
-Command handlers receive `ExtensionCommandContext`, which extends `ExtensionContext` with session control methods. These are only available in commands because they can deadlock if called from event handlers.
-
-### ctx.waitForIdle()
-
-Wait for the agent to finish streaming:
+Dispatch input through the same pipeline as typed editor input: slash commands, prompt templates, and skills all resolve exactly as if the user had typed the text. The input event it produces carries `source: "extension"`.
 
 ```typescript
-pi.registerCommand("my-cmd", {
-  handler: async (args, ctx) => {
-    await ctx.waitForIdle();
-    // Agent is now idle, safe to modify session
+pi.registerCommand("rerun-review", {
+  handler: async (_args, ctx) => {
+    await ctx.dispatchUserInput("/review src/index.ts");
   },
 });
 ```
+
+Options:
+- `deliverAs`: how to queue the input when the agent is streaming — `"steer"` (deliver before the next LLM call) or `"followUp"` (deliver after the current run finishes). Dispatching while streaming without `deliverAs` rejects.
+
+Use `dispatchUserInput` when the text should go through command/template expansion; use `pi.sendUserMessage()` to submit content as a plain user message without that processing.
 
 ### ctx.newSession(options?)
 
@@ -1039,6 +1039,23 @@ Options:
 - `parentSession`: parent session file to record in the new session header
 - `setup`: mutate the new session's `SessionManager` before `withSession` runs
 - `withSession`: run post-switch work against a fresh replacement-session context. Do not use captured old `pi` / command `ctx`; see [Session replacement lifecycle and footguns](#session-replacement-lifecycle-and-footguns).
+
+## ExtensionCommandContext
+
+Command handlers receive `ExtensionCommandContext`, which extends `ExtensionContext` with session control methods. These are only available in commands because they can deadlock if called from event handlers.
+
+### ctx.waitForIdle()
+
+Wait for the agent to finish streaming:
+
+```typescript
+pi.registerCommand("my-cmd", {
+  handler: async (args, ctx) => {
+    await ctx.waitForIdle();
+    // Agent is now idle, safe to modify session
+  },
+});
+```
 
 ### ctx.fork(entryId, options?)
 

@@ -192,6 +192,22 @@ export async function emitSessionShutdownEvent(
 	return false;
 }
 
+/**
+ * Splices extension-contributed sections into a fresh copy of the base
+ * sections, before the volatile environment tail (the first
+ * `cacheRetention: "none"` section) so they sit inside the cached prefix.
+ */
+export function spliceContributedSections(
+	base: SystemPromptSection[],
+	contributed: SystemPromptSection[],
+): SystemPromptSection[] {
+	const sections = base.slice();
+	const volatileIndex = sections.findIndex((s) => s.cacheRetention === "none");
+	const insertAt = volatileIndex === -1 ? sections.length : volatileIndex;
+	sections.splice(insertAt, 0, ...contributed);
+	return sections;
+}
+
 const noOpUIContext: ExtensionUIContext = {
 	select: async () => undefined,
 	confirm: async () => false,
@@ -977,6 +993,14 @@ export class ExtensionRunner {
 						}
 						if (result.systemPromptSection) {
 							contributedSections.push(result.systemPromptSection);
+							// Keep the chained prompt seen by later handlers (and
+							// ctx.getSystemPrompt) complete. A string replacement stays
+							// authoritative, so contributions only fold in without one.
+							if (!systemPromptModified) {
+								currentSystemPrompt = flattenSystemPrompt(
+									spliceContributedSections(systemPromptSections, contributedSections),
+								);
+							}
 						}
 					}
 				} catch (err) {

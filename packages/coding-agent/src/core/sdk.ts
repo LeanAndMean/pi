@@ -141,8 +141,11 @@ function resolveCacheRetention(option: CacheRetention | undefined): CacheRetenti
 		return option;
 	}
 	const env = process.env.PI_CACHE_RETENTION;
-	if (env && isCacheRetention(env)) {
-		return env;
+	if (env) {
+		if (isCacheRetention(env)) {
+			return env;
+		}
+		console.warn(`Invalid PI_CACHE_RETENTION "${env}". Valid values: none, short, long. Using "long".`);
 	}
 	return "long";
 }

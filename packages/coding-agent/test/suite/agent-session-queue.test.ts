@@ -155,6 +155,65 @@ describe("AgentSession queue characterization", () => {
 		expect(getAssistantTexts(harness)).toContain("follow-up response");
 	});
 
+	it("queues dispatchUserInput with deliverAs steer for delivery before the next LLM call", async () => {
+		const waiting = await createWaitingHarness();
+		const { harness, waitForToolStart, promptPromise, releaseToolExecution } = waiting;
+		harnesses.push(harness);
+
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall("wait", {}), { stopReason: "toolUse" }),
+			(context) => {
+				const sawSteer = context.messages.some(
+					(message) => message.role === "user" && getMessageText(message) === "steer via dispatch",
+				);
+				return fauxAssistantMessage(sawSteer ? "saw steer" : "missing steer");
+			},
+		]);
+
+		await waitForToolStart;
+		await harness.session.dispatchUserInput("steer via dispatch", { deliverAs: "steer" });
+		releaseToolExecution();
+		await promptPromise;
+
+		expect(getUserTexts(harness)).toEqual(["start", "steer via dispatch"]);
+		expect(getAssistantTexts(harness)).toContain("saw steer");
+	});
+
+	it("queues dispatchUserInput with deliverAs followUp until the current run finishes", async () => {
+		const waiting = await createWaitingHarness();
+		const { harness, waitForToolStart, promptPromise, releaseToolExecution } = waiting;
+		harnesses.push(harness);
+		const assistantSeenBeforeFollowUp: string[] = [];
+
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall("wait", {}), { stopReason: "toolUse" }),
+			(context) => {
+				assistantSeenBeforeFollowUp.push(
+					...context.messages
+						.filter((message) => message.role === "assistant")
+						.map((message) =>
+							message.content
+								.filter((part): part is { type: "text"; text: string } => part.type === "text")
+								.map((part) => part.text)
+								.join("\n"),
+						),
+				);
+				return fauxAssistantMessage("follow-up response");
+			},
+		]);
+
+		await waitForToolStart;
+		await harness.session.dispatchUserInput("follow up via dispatch", { deliverAs: "followUp" });
+		releaseToolExecution();
+		await promptPromise;
+
+		expect(getUserTexts(harness)).toEqual(["start", "follow up via dispatch"]);
+		// The follow-up request saw the original run's assistant turn, proving
+		// it was delivered after that run finished rather than steered into it.
+		expect(assistantSeenBeforeFollowUp).toContain("");
+		expect(getAssistantTexts(harness)).toContain("follow-up response");
+	});
+
 	it("delivers multiple steering messages in order in one-at-a-time mode", async () => {
 		const waiting = await createWaitingHarness();
 		const { harness, waitForToolStart, promptPromise, releaseToolExecution } = waiting;

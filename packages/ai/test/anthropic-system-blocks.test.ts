@@ -4,10 +4,12 @@ import { describe, expect, it } from "vitest";
 import { getModel } from "../src/models.js";
 import { streamAnthropic } from "../src/providers/anthropic.js";
 import type { Context, StreamOptions, SystemPromptSection } from "../src/types.js";
+import { flattenSystemPrompt } from "../src/utils/system-prompt.js";
 
 /**
  * Payload-shape tests for sectioned system prompts on the Anthropic adapter.
- * Requests are captured via onPayload with fake keys and never reach the API.
+ * Requests are captured via onPayload, which fires while building the request;
+ * the fake base URL has no reachable endpoint, so nothing leaves the machine.
  */
 
 const sections: SystemPromptSection[] = [
@@ -27,7 +29,7 @@ async function capturePayload(
 	context: Context,
 	options?: Partial<StreamOptions> & { apiKey?: string },
 ): Promise<MessageCreateParamsStreaming> {
-	const model = getModel("anthropic", "claude-haiku-4-5");
+	const model = { ...getModel("anthropic", "claude-haiku-4-5"), baseUrl: "https://my-proxy.example.com/v1" };
 	let captured: MessageCreateParamsStreaming | null = null;
 
 	try {
@@ -42,7 +44,7 @@ async function capturePayload(
 			if (event.type === "error") break;
 		}
 	} catch {
-		// Expected to fail: fake key, request never succeeds
+		// Expected to fail: no reachable endpoint behind the fake base URL
 	}
 
 	expect(captured).not.toBeNull();
@@ -159,6 +161,43 @@ describe("Anthropic sectioned system blocks", () => {
 		const payload = await capturePayload(makeContext([]));
 
 		expect(payload.system).toBeUndefined();
+	});
+
+	it("preserves array order for interleaved stable and volatile sections", async () => {
+		const interleaved: SystemPromptSection[] = [
+			{ id: "core", text: "You are pi." },
+			{ id: "ext-volatile", text: "\n\nPer-turn context", cacheRetention: "none" },
+			{ id: "ext-stable", text: "\n\nLate stable directives" },
+			{ id: "volatile", text: "\nCurrent date: 2026-01-01", cacheRetention: "none" },
+		];
+		const payload = await capturePayload(makeContext(interleaved));
+
+		const blocks = systemBlocks(payload);
+		expect(blocks.map((b) => b.text)).toEqual([
+			"You are pi.",
+			"\n\nPer-turn context",
+			"\n\nLate stable directives",
+			"\nCurrent date: 2026-01-01",
+		]);
+		// Only the leading stable run is cached; everything from the first
+		// volatile section onward trails uncached in array order.
+		expect(blocks[0].cache_control).toEqual({ type: "ephemeral" });
+		expect(blocks.slice(1).every((b) => b.cache_control === undefined)).toBe(true);
+		// Concatenated block text matches what every other provider sends.
+		expect(blocks.map((b) => b.text).join("")).toBe(flattenSystemPrompt(interleaved));
+	});
+
+	it("emits only uncached blocks when the first section is volatile", async () => {
+		const volatileFirst: SystemPromptSection[] = [
+			{ id: "ext-volatile", text: "Per-turn context", cacheRetention: "none" },
+			{ id: "late-stable", text: "\n\nStable directives" },
+		];
+		const payload = await capturePayload(makeContext(volatileFirst));
+
+		const blocks = systemBlocks(payload);
+		expect(blocks.map((b) => b.text)).toEqual(["Per-turn context", "\n\nStable directives"]);
+		expect(blocks.every((b) => b.cache_control === undefined)).toBe(true);
+		expect(blocks.map((b) => b.text).join("")).toBe(flattenSystemPrompt(volatileFirst));
 	});
 
 	it("skips empty-text sections", async () => {

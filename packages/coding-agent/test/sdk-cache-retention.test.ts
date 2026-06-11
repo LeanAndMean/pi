@@ -9,7 +9,7 @@ import {
 	type Model,
 	type SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.js";
 import { ModelRegistry } from "../src/core/model-registry.js";
 import { createAgentSession } from "../src/core/sdk.js";
@@ -202,10 +202,16 @@ describe("createAgentSession cacheRetention wiring", () => {
 			expect(options?.cacheRetention).toBe("long");
 		});
 
-		it("ignores invalid PI_CACHE_RETENTION values", async () => {
+		it("warns and falls back to long for invalid PI_CACHE_RETENTION values", async () => {
 			process.env.PI_CACHE_RETENTION = "forever";
-			const options = await captureStreamOptions();
-			expect(options?.cacheRetention).toBe("long");
+			const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+			try {
+				const options = await captureStreamOptions();
+				expect(options?.cacheRetention).toBe("long");
+				expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Invalid PI_CACHE_RETENTION "forever"'));
+			} finally {
+				warnSpy.mockRestore();
+			}
 		});
 	});
 

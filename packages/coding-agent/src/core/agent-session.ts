@@ -84,7 +84,7 @@ import {
 	type TurnStartEvent,
 	wrapRegisteredTools,
 } from "./extensions/index.js";
-import { emitSessionShutdownEvent } from "./extensions/runner.js";
+import { emitSessionShutdownEvent, spliceContributedSections } from "./extensions/runner.js";
 import type { BashExecutionMessage, CustomMessage } from "./messages.js";
 import type { ModelRegistry } from "./model-registry.js";
 import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.js";
@@ -1102,18 +1102,15 @@ export class AgentSession {
 				}
 			}
 			// Apply extension-modified system prompt, or reset to base. A string
-			// replacement is authoritative: it wins for the whole prompt and any
-			// contributed sections are dropped for this turn.
-			if (result?.systemPrompt) {
+			// replacement is authoritative (even an empty string): it wins for the
+			// whole prompt and any contributed sections are dropped for this turn.
+			if (result?.systemPrompt !== undefined) {
 				this.agent.state.systemPrompt = result.systemPrompt;
 			} else if (result?.systemPromptSections) {
-				// Splice contributed sections into a fresh copy of the base,
-				// before the volatile environment tail.
-				const sections = this._baseSystemPromptSections.slice();
-				const volatileIndex = sections.findIndex((s) => s.cacheRetention === "none");
-				const insertAt = volatileIndex === -1 ? sections.length : volatileIndex;
-				sections.splice(insertAt, 0, ...result.systemPromptSections);
-				this.agent.state.systemPrompt = sections;
+				this.agent.state.systemPrompt = spliceContributedSections(
+					this._baseSystemPromptSections,
+					result.systemPromptSections,
+				);
 			} else {
 				// Ensure we're using the base prompt (in case previous turn had modifications)
 				this.agent.state.systemPrompt = this._baseSystemPromptSections.slice();

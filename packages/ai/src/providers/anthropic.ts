@@ -874,13 +874,15 @@ const claudeCodeIdentity = "You are Claude Code, Anthropic's official CLI for Cl
  *
  * Anthropic allows at most 4 `cache_control` breakpoints per request, and the
  * last tool and last user message already consume two, so the system prompt
- * must spend exactly one: it lands on the single stable block (all sections
- * except `cacheRetention: "none"`, folded together so the cached prefix stays
- * byte-identical to the flattened prompt). Volatile sections trail as
- * uncached blocks — anything after the breakpoint is excluded from the cached
- * prefix. On OAuth the Claude Code identity block stays first; caching is
- * prefix-based, so the stable block's breakpoint covers it without a second
- * one (unlike the legacy string path, which marks both for back-compat).
+ * must spend exactly one: it lands on a single stable block folding the
+ * leading run of sections up to the first `cacheRetention: "none"` section.
+ * Everything from the first volatile section onward trails as uncached blocks
+ * in array order — anything after the breakpoint is excluded from the cached
+ * prefix, and preserving array order keeps the concatenated block text
+ * byte-identical to the flattened prompt other providers send. On OAuth the
+ * Claude Code identity block stays first; caching is prefix-based, so the
+ * stable block's breakpoint covers it without a second one (unlike the legacy
+ * string path, which marks both for back-compat).
  */
 function buildSystemBlocks(
 	sections: SystemPromptSection[],
@@ -888,8 +890,10 @@ function buildSystemBlocks(
 	cacheControl?: CacheControlEphemeral,
 ): TextBlockParam[] {
 	const blocks: TextBlockParam[] = [];
-	const stable = sections.filter((s) => s.cacheRetention !== "none" && s.text);
-	const volatile = sections.filter((s) => s.cacheRetention === "none" && s.text);
+	const nonEmpty = sections.filter((s) => s.text);
+	const firstVolatile = nonEmpty.findIndex((s) => s.cacheRetention === "none");
+	const stable = firstVolatile === -1 ? nonEmpty : nonEmpty.slice(0, firstVolatile);
+	const tail = firstVolatile === -1 ? [] : nonEmpty.slice(firstVolatile);
 
 	if (isOAuthToken) {
 		blocks.push({
@@ -907,7 +911,7 @@ function buildSystemBlocks(
 			...(cacheControl ? { cache_control: cacheControl } : {}),
 		});
 	}
-	for (const section of volatile) {
+	for (const section of tail) {
 		blocks.push({ type: "text", text: sanitizeSurrogates(section.text) });
 	}
 	return blocks;

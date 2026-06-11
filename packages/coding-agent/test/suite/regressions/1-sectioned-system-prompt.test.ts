@@ -248,6 +248,42 @@ describe("regression #1: Anthropic payload cache tiers", () => {
 		expect(blocks[1]!.cache_control).toBeUndefined();
 	});
 
+	it("keeps an extension-contributed volatile section in the uncached tail, in array order", async () => {
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.on("before_agent_start", async () => ({
+						systemPromptSection: {
+							id: "ext-volatile",
+							text: "\n\nPer-turn extension context",
+							cacheRetention: "none" as const,
+						},
+					}));
+				},
+			],
+		});
+		harnesses.push(harness);
+		const captured = captureSystemPrompt(harness);
+		await harness.session.prompt("hello");
+		const splicedSections = captured.current as SystemPromptSection[];
+
+		const { payload } = await captureAnthropicPayload({ systemPromptOverride: splicedSections });
+
+		const blocks = payload.system;
+		expect(blocks).toBeDefined();
+		if (blocks === undefined) throw new Error("unreachable");
+
+		// The contributed volatile section lands in the uncached trailing blocks.
+		const extBlock = blocks.find((block) => block.text.includes("Per-turn extension context"));
+		expect(extBlock).toBeDefined();
+		expect(extBlock!.cache_control).toBeUndefined();
+		// Exactly one breakpoint, on the folded stable prefix.
+		expect(blocks.filter((block) => block.cache_control).length).toBe(1);
+		expect(blocks[0]!.cache_control).toEqual({ type: "ephemeral", ttl: "1h" });
+		// Payload text order is byte-identical to the flattened prompt.
+		expect(blocks.map((block) => block.text).join("")).toBe(flattenSystemPrompt(splicedSections));
+	});
+
 	it("includes an extension-contributed section in the cached stable prefix", async () => {
 		const harness = await createHarness({
 			extensionFactories: [

@@ -313,7 +313,9 @@ describe("AgentSession prompt characterization", () => {
 							commandRuns.push(args);
 						},
 					});
-					pi.on("input", (event) => inputEvents.push(event.text));
+					pi.on("input", (event) => {
+						inputEvents.push(event.text);
+					});
 				},
 			],
 		});
