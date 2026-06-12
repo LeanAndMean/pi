@@ -237,6 +237,17 @@ await session.followUp("After you're done, also do this");
 
 Both `steer()` and `followUp()` expand file-based prompt templates but error on extension commands (extension commands cannot be queued).
 
+`dispatchUserInput()` routes text through the same pipeline as typed editor input — extension-registered slash commands, prompt templates, and skills all resolve as if the user had typed it (the resulting input event carries `source: "extension"`):
+
+```typescript
+await session.dispatchUserInput("/review src/index.ts");
+
+// While streaming, queueing must be explicit, same as prompt():
+await session.dispatchUserInput("also check the tests", { deliverAs: "followUp" });
+```
+
+Dispatching while streaming without `deliverAs` throws, unless the input is handled before it reaches the prompt queue: extension-registered commands execute immediately even during streaming, and input consumed by an extension `input` handler returns without throwing. Built-in interactive commands (`/model`, `/login`, ...) are not part of this pipeline — dispatching one sends the text to the LLM as a literal user message.
+
 ### Agent and AgentState
 
 The `Agent` class (from `@earendil-works/pi-agent-core`) handles the core LLM interaction. Access it via `session.agent`.

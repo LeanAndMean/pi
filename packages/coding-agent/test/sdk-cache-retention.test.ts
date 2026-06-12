@@ -202,13 +202,19 @@ describe("createAgentSession cacheRetention wiring", () => {
 			expect(options?.cacheRetention).toBe("long");
 		});
 
-		it("warns and falls back to long for invalid PI_CACHE_RETENTION values", async () => {
+		it("warns once and falls back to long for invalid PI_CACHE_RETENTION values", async () => {
 			process.env.PI_CACHE_RETENTION = "forever";
 			const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 			try {
 				const options = await captureStreamOptions();
 				expect(options?.cacheRetention).toBe("long");
 				expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Invalid PI_CACHE_RETENTION "forever"'));
+
+				// Session creation re-resolves retention (e.g. on /new); the warning
+				// must not repeat under the TUI.
+				const second = await captureStreamOptions();
+				expect(second?.cacheRetention).toBe("long");
+				expect(warnSpy).toHaveBeenCalledTimes(1);
 			} finally {
 				warnSpy.mockRestore();
 			}

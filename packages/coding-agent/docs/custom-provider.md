@@ -354,7 +354,7 @@ For providers with non-standard APIs, implement `streamSimple`. Study the existi
 
 ### System Prompt Handling
 
-`Context.systemPrompt` is `string | SystemPromptSection[] | undefined`. Coding-agent sessions send ordered `SystemPromptSection[]` (each section is `{ id, text, cacheRetention? }`) so providers can cache the stable prefix separately from volatile content such as the current date. A custom provider must handle both shapes — call `flattenSystemPrompt(context.systemPrompt)` (exported from `@earendil-works/pi-ai`) to get the equivalent single-string prompt, which is what all built-in non-Anthropic providers send. If your provider supports cache breakpoints, you can instead split on sections marked `cacheRetention: "none"` while preserving array order, as the Anthropic adapter does.
+`Context.systemPrompt` is `string | SystemPromptSection[] | undefined`. Coding-agent sessions send ordered `SystemPromptSection[]` (each section is `{ id, text, cacheRetention?: "none" }`) so providers can cache the stable prefix separately from volatile content such as the current date. A custom provider must handle both shapes — call `flattenSystemPrompt(context.systemPrompt)` (exported from `@earendil-works/pi-ai`) to get the equivalent single-string prompt, which is what all built-in non-Anthropic providers send. If your provider supports cache breakpoints, you can instead split on sections marked `cacheRetention: "none"` while preserving array order, as the Anthropic adapter does.
 
 ### Stream Pattern
 

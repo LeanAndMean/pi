@@ -47,6 +47,7 @@ export type {
 	ContextUsage,
 	CustomToolCallEvent,
 	CustomToolResultEvent,
+	DeliverAs,
 	DispatchUserInputHandler,
 	DispatchUserInputOptions,
 	EditorFactory,
@@ -112,6 +113,7 @@ export type {
 	// Events - Resources
 	ResourcesDiscoverEvent,
 	ResourcesDiscoverResult,
+	SendMessageDeliverAs,
 	SendMessageHandler,
 	SendUserMessageHandler,
 	SessionBeforeCompactEvent,

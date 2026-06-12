@@ -257,15 +257,20 @@ export interface Tool<TParameters extends TSchema = TSchema> {
  *
  * Each section's `text` must include its own leading separator, so that
  * concatenating all sections produces the equivalent single-string prompt.
+ *
+ * Fields are `readonly` because section objects are shared across the
+ * session/extension boundary; build a new section instead of mutating one.
  */
 export interface SystemPromptSection {
-	id: string;
-	text: string;
+	/** Informational label for diagnostics and display. Ids are not deduplicated or looked up. */
+	readonly id: string;
+	readonly text: string;
 	/**
-	 * Cache retention for this section. "none" marks volatile content that
-	 * providers should exclude from the stable cached prefix.
+	 * "none" marks volatile content that providers should exclude from the
+	 * stable cached prefix. Omit for stable sections — per-section TTLs are
+	 * not supported (the request-level cache retention applies).
 	 */
-	cacheRetention?: CacheRetention;
+	readonly cacheRetention?: "none";
 }
 
 export interface Context {

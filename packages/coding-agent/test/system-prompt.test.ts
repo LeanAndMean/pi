@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { afterAll, beforeAll, describe, expect, test, vi } from "vitest";
 import { getDocsPath, getExamplesPath, getReadmePath } from "../src/config.js";
 import { formatSkillsForPrompt, type Skill } from "../src/core/skills.js";
 import { createSyntheticSourceInfo } from "../src/core/source-info.js";
@@ -346,6 +346,17 @@ describe("buildSystemPromptSections", () => {
 });
 
 describe("buildSystemPrompt byte-identity with pre-refactor output", () => {
+	// Oracle and builder each call new Date(); freeze time so a run spanning
+	// midnight can't produce different dates in the two strings.
+	beforeAll(() => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date(2026, 5, 12, 12, 0, 0));
+	});
+
+	afterAll(() => {
+		vi.useRealTimers();
+	});
+
 	const contextFiles = [{ path: "AGENTS.md", content: "Project instructions here." }];
 	const skills = [makeSkill("alpha"), makeSkill("beta")];
 

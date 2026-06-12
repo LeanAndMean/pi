@@ -136,6 +136,10 @@ function isCacheRetention(value: string): value is CacheRetention {
 	return value === "none" || value === "short" || value === "long";
 }
 
+// resolveCacheRetention runs on every createAgentSession call (including /new),
+// so warn about a bad env var only once per process to keep it out of the TUI.
+let warnedInvalidCacheRetention = false;
+
 function resolveCacheRetention(option: CacheRetention | undefined): CacheRetention {
 	if (option) {
 		return option;
@@ -145,7 +149,10 @@ function resolveCacheRetention(option: CacheRetention | undefined): CacheRetenti
 		if (isCacheRetention(env)) {
 			return env;
 		}
-		console.warn(`Invalid PI_CACHE_RETENTION "${env}". Valid values: none, short, long. Using "long".`);
+		if (!warnedInvalidCacheRetention) {
+			warnedInvalidCacheRetention = true;
+			console.warn(`Invalid PI_CACHE_RETENTION "${env}". Valid values: none, short, long. Using "long".`);
+		}
 	}
 	return "long";
 }

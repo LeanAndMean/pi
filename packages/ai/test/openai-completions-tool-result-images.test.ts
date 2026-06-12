@@ -54,6 +54,30 @@ function buildToolResult(toolCallId: string, timestamp: number): ToolResultMessa
 }
 
 describe("openai-completions convertMessages", () => {
+	it("flattens a sectioned system prompt into a single system message", () => {
+		const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini");
+		const model: Model<"openai-completions"> = {
+			...baseModel,
+			api: "openai-completions",
+		};
+
+		const context: Context = {
+			systemPrompt: [
+				{ id: "core", text: "You are pi." },
+				{ id: "append", text: "\n\nAlways answer in haiku." },
+				{ id: "volatile", text: "\nCurrent date: 2026-01-01", cacheRetention: "none" },
+			],
+			messages: [{ role: "user", content: "hi", timestamp: Date.now() }],
+		};
+
+		const messages = convertMessages(model, context, compat);
+
+		expect(messages[0]).toEqual({
+			role: "system",
+			content: "You are pi.\n\nAlways answer in haiku.\nCurrent date: 2026-01-01",
+		});
+	});
+
 	it("batches tool-result images after consecutive tool results", () => {
 		const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini");
 		const model: Model<"openai-completions"> = {

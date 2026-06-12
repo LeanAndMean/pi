@@ -106,10 +106,11 @@ const context: Context = {
 
 // systemPrompt also accepts ordered SystemPromptSection[] so providers can
 // cache the stable prefix separately from volatile content. Sections marked
-// cacheRetention: "none" are excluded from the cached prefix on providers
-// with cache breakpoints (Anthropic); all other providers flatten sections
-// in array order. Use flattenSystemPrompt(context.systemPrompt) to get the
-// equivalent single-string prompt.
+// cacheRetention: "none" are excluded from the cached prefix on the Anthropic
+// adapter only; every other provider (including Bedrock, which still sets its
+// own cachePoint) flattens sections in array order. Use
+// flattenSystemPrompt(context.systemPrompt) to get the equivalent
+// single-string prompt.
 const sectioned: Context = {
   systemPrompt: [
     { id: 'core', text: 'You are a helpful assistant.' },

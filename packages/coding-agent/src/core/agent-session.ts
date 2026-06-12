@@ -60,6 +60,7 @@ import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.
 import { createToolHtmlRenderer } from "./export-html/tool-renderer.js";
 import {
 	type ContextUsage,
+	type DeliverAs,
 	type DispatchUserInputOptions,
 	type ExtensionCommandContextActions,
 	type ExtensionErrorListener,
@@ -70,6 +71,7 @@ import {
 	type MessageStartEvent,
 	type MessageUpdateEvent,
 	type ReplacedSessionContext,
+	type SendMessageDeliverAs,
 	type SessionBeforeCompactResult,
 	type SessionBeforeTreeResult,
 	type SessionStartEvent,
@@ -199,7 +201,7 @@ export interface PromptOptions {
 	/** Image attachments */
 	images?: ImageContent[];
 	/** When streaming, how to queue the message: "steer" (interrupt) or "followUp" (wait). Required if streaming. */
-	streamingBehavior?: "steer" | "followUp";
+	streamingBehavior?: DeliverAs;
 	/** Source of input for extension input event handlers. Defaults to "interactive". */
 	source?: InputSource;
 	/** Internal hook used by RPC mode to observe prompt preflight acceptance or rejection. */
@@ -1023,7 +1025,8 @@ export class AgentSession {
 			if (this.isStreaming) {
 				if (!options?.streamingBehavior) {
 					throw new Error(
-						"Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message.",
+						"Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') — " +
+							"deliverAs when calling dispatchUserInput() or sendUserMessage() — to queue the message.",
 					);
 				}
 				if (options.streamingBehavior === "followUp") {
@@ -1293,7 +1296,7 @@ export class AgentSession {
 	 */
 	async sendCustomMessage<T = unknown>(
 		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
-		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
+		options?: { triggerTurn?: boolean; deliverAs?: SendMessageDeliverAs },
 	): Promise<void> {
 		const appMessage = {
 			role: "custom" as const,
@@ -1335,7 +1338,7 @@ export class AgentSession {
 	 */
 	async sendUserMessage(
 		content: string | (TextContent | ImageContent)[],
-		options?: { deliverAs?: "steer" | "followUp" },
+		options?: { deliverAs?: DeliverAs },
 	): Promise<void> {
 		// Normalize content to text string + optional images
 		let text: string;
@@ -1366,6 +1369,16 @@ export class AgentSession {
 		});
 	}
 
+	/**
+	 * Dispatch input through the same pipeline as typed editor input:
+	 * extension-registered slash commands, prompt templates, and skills all
+	 * resolve as if the user had typed the text (source: "extension").
+	 *
+	 * @param options.deliverAs Delivery mode when streaming: "steer" or "followUp"
+	 * @throws Error if streaming and no deliverAs specified, unless the input is
+	 *   handled before reaching the prompt queue (extension commands execute
+	 *   immediately; input consumed by an `input` handler returns normally)
+	 */
 	async dispatchUserInput(input: string, options?: DispatchUserInputOptions): Promise<void> {
 		await this.prompt(input, {
 			expandPromptTemplates: true,

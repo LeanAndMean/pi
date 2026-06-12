@@ -179,6 +179,25 @@ describe("AgentSession queue characterization", () => {
 		expect(getAssistantTexts(harness)).toContain("saw steer");
 	});
 
+	it("rejects dispatchUserInput while streaming without deliverAs", async () => {
+		const waiting = await createWaitingHarness();
+		const { harness, waitForToolStart, promptPromise, releaseToolExecution } = waiting;
+		harnesses.push(harness);
+
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall("wait", {}), { stopReason: "toolUse" }),
+			fauxAssistantMessage("done"),
+		]);
+
+		await waitForToolStart;
+		await expect(harness.session.dispatchUserInput("no queue mode")).rejects.toThrow(/deliverAs/);
+
+		releaseToolExecution();
+		await promptPromise;
+
+		expect(getUserTexts(harness)).toEqual(["start"]);
+	});
+
 	it("queues dispatchUserInput with deliverAs followUp until the current run finishes", async () => {
 		const waiting = await createWaitingHarness();
 		const { harness, waitForToolStart, promptPromise, releaseToolExecution } = waiting;

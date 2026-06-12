@@ -1468,23 +1468,7 @@ export class InteractiveMode {
 			uiContext,
 			commandContextActions: {
 				waitForIdle: () => this.session.agent.waitForIdle(),
-				newSession: async (options) => {
-					if (this.loadingAnimation) {
-						this.loadingAnimation.stop();
-						this.loadingAnimation = undefined;
-					}
-					this.statusContainer.clear();
-					try {
-						const result = await this.runtimeHost.newSession(options);
-						if (!result.cancelled) {
-							this.renderCurrentSessionState();
-							this.ui.requestRender();
-						}
-						return result;
-					} catch (error: unknown) {
-						return this.handleFatalRuntimeError("Failed to create session", error);
-					}
-				},
+				newSession: (options) => this.handleExtensionNewSession(options),
 				fork: async (entryId, options) => {
 					try {
 						const result = await this.runtimeHost.fork(entryId, options);
@@ -1573,6 +1557,32 @@ export class InteractiveMode {
 		this.updateTerminalTitle();
 	}
 
+	/**
+	 * Extension-facing newSession wrapper shared by the command and shortcut
+	 * contexts: stops the loading animation, re-renders on success, and routes
+	 * mid-swap failures to fatal handling so the runtime is never left
+	 * half-switched.
+	 */
+	private async handleExtensionNewSession(
+		options?: Parameters<AgentSessionRuntime["newSession"]>[0],
+	): Promise<{ cancelled: boolean }> {
+		if (this.loadingAnimation) {
+			this.loadingAnimation.stop();
+			this.loadingAnimation = undefined;
+		}
+		this.statusContainer.clear();
+		try {
+			const result = await this.runtimeHost.newSession(options);
+			if (!result.cancelled) {
+				this.renderCurrentSessionState();
+				this.ui.requestRender();
+			}
+			return result;
+		} catch (error: unknown) {
+			return this.handleFatalRuntimeError("Failed to create session", error);
+		}
+	}
+
 	private async handleFatalRuntimeError(prefix: string, error: unknown): Promise<never> {
 		const message = error instanceof Error ? error.message : String(error);
 		this.showError(`${prefix}: ${message}`);
@@ -1634,14 +1644,7 @@ export class InteractiveMode {
 			},
 			getSystemPrompt: () => this.session.systemPrompt,
 			dispatchUserInput: (input, options) => this.session.dispatchUserInput(input, options),
-			newSession: async (options) => {
-				const result = await this.runtimeHost.newSession(options);
-				if (!result.cancelled) {
-					this.renderCurrentSessionState();
-					this.ui.requestRender();
-				}
-				return result;
-			},
+			newSession: (options) => this.handleExtensionNewSession(options),
 		});
 
 		// Set up the extension shortcut handler on the default editor

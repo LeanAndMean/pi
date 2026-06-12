@@ -157,6 +157,24 @@ describe("Anthropic sectioned system blocks", () => {
 		expect(countBreakpoints(payload)).toBe(0);
 	});
 
+	it("emits the OAuth identity block with no breakpoints anywhere when cacheRetention is none", async () => {
+		const payload = await capturePayload(makeContext(sections), {
+			apiKey: "sk-ant-oat-fake",
+			cacheRetention: "none",
+		});
+
+		const blocks = systemBlocks(payload);
+		expect(blocks).toHaveLength(3);
+		expect(blocks[0].text).toBe("You are Claude Code, Anthropic's official CLI for Claude.");
+		expect(
+			blocks
+				.map((b) => b.text)
+				.slice(1)
+				.join(""),
+		).toBe(flattenSystemPrompt(sections));
+		expect(countBreakpoints(payload)).toBe(0);
+	});
+
 	it("omits the system field entirely for an empty section array", async () => {
 		const payload = await capturePayload(makeContext([]));
 

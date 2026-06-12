@@ -196,6 +196,10 @@ export async function emitSessionShutdownEvent(
  * Splices extension-contributed sections into a fresh copy of the base
  * sections, before the volatile environment tail (the first
  * `cacheRetention: "none"` section) so they sit inside the cached prefix.
+ *
+ * Section texts are joined with no separator when flattened, so contributed
+ * text that doesn't start with a newline is prefixed with `\n\n` to keep it
+ * from gluing onto the previous section's last line.
  */
 export function spliceContributedSections(
 	base: SystemPromptSection[],
@@ -204,7 +208,10 @@ export function spliceContributedSections(
 	const sections = base.slice();
 	const volatileIndex = sections.findIndex((s) => s.cacheRetention === "none");
 	const insertAt = volatileIndex === -1 ? sections.length : volatileIndex;
-	sections.splice(insertAt, 0, ...contributed);
+	const normalized = contributed.map((section) =>
+		section.text && !section.text.startsWith("\n") ? { ...section, text: `\n\n${section.text}` } : section,
+	);
+	sections.splice(insertAt, 0, ...normalized);
 	return sections;
 }
 
@@ -258,8 +265,15 @@ export class ExtensionRunner {
 	private getContextUsageFn: () => ContextUsage | undefined = () => undefined;
 	private compactFn: (options?: CompactOptions) => void = () => {};
 	private getSystemPromptFn: () => string = () => "";
-	private dispatchUserInputFn: DispatchUserInputHandler = async () => {};
-	private newSessionHandler: NewSessionHandler = async () => ({ cancelled: false });
+	// Unbound defaults reject rather than fabricate success: silently dropping
+	// input or reporting a session swap that never happened hides real bugs in
+	// headless/SDK embeddings that never bind these handlers.
+	private dispatchUserInputFn: DispatchUserInputHandler = async () => {
+		throw new Error("dispatchUserInput is not available in this session mode (no input pipeline bound)");
+	};
+	private newSessionHandler: NewSessionHandler = async () => {
+		throw new Error("newSession is not available in this session mode (no command context bound)");
+	};
 	private forkHandler: ForkHandler = async () => ({ cancelled: false });
 	private navigateTreeHandler: NavigateTreeHandler = async () => ({ cancelled: false });
 	private switchSessionHandler: SwitchSessionHandler = async () => ({ cancelled: false });
@@ -369,7 +383,9 @@ export class ExtensionRunner {
 		}
 
 		this.waitForIdleFn = async () => {};
-		this.newSessionHandler = async () => ({ cancelled: false });
+		this.newSessionHandler = async () => {
+			throw new Error("newSession is not available in this session mode (no command context bound)");
+		};
 		this.forkHandler = async () => ({ cancelled: false });
 		this.navigateTreeHandler = async () => ({ cancelled: false });
 		this.switchSessionHandler = async () => ({ cancelled: false });
@@ -506,6 +522,14 @@ export class ExtensionRunner {
 	}
 
 	emitError(error: ExtensionError): void {
+		if (this.errorListeners.size === 0) {
+			// SDK embeddings without onError would otherwise get zero signal.
+			console.error(`Extension error [${error.extensionPath}] (${error.event}): ${error.error}`);
+			if (error.stack) {
+				console.error(error.stack);
+			}
+			return;
+		}
 		for (const listener of this.errorListeners) {
 			listener(error);
 		}
@@ -965,6 +989,7 @@ export class ExtensionRunner {
 		const messages: NonNullable<BeforeAgentStartEventResult["message"]>[] = [];
 		const contributedSections: SystemPromptSection[] = [];
 		let systemPromptModified = false;
+		let replacedByExtensionPath: string | undefined;
 
 		for (const ext of this.extensions) {
 			const handlers = ext.handlers.get("before_agent_start");
@@ -990,16 +1015,40 @@ export class ExtensionRunner {
 						if (result.systemPrompt !== undefined) {
 							currentSystemPrompt = result.systemPrompt;
 							systemPromptModified = true;
+							replacedByExtensionPath = ext.path;
 						}
 						if (result.systemPromptSection) {
-							contributedSections.push(result.systemPromptSection);
-							// Keep the chained prompt seen by later handlers (and
-							// ctx.getSystemPrompt) complete. A string replacement stays
-							// authoritative, so contributions only fold in without one.
-							if (!systemPromptModified) {
-								currentSystemPrompt = flattenSystemPrompt(
-									spliceContributedSections(systemPromptSections, contributedSections),
-								);
+							const section = result.systemPromptSection;
+							// Malformed sections would otherwise surface as an opaque
+							// provider 400 naming neither extension nor field.
+							if (typeof section.id !== "string" || typeof section.text !== "string") {
+								this.emitError({
+									extensionPath: ext.path,
+									event: "before_agent_start",
+									error: "Ignoring systemPromptSection: `id` and `text` must be strings",
+								});
+							} else {
+								if (
+									section.cacheRetention !== "none" &&
+									contributedSections.some((s) => s.cacheRetention === "none")
+								) {
+									this.emitError({
+										extensionPath: ext.path,
+										event: "before_agent_start",
+										error:
+											`Stable systemPromptSection "${section.id}" was contributed after a volatile one; ` +
+											"it will sit after that section and be excluded from the cached prefix",
+									});
+								}
+								contributedSections.push(section);
+								// Keep the chained prompt seen by later handlers (and
+								// ctx.getSystemPrompt) complete. A string replacement stays
+								// authoritative, so contributions only fold in without one.
+								if (!systemPromptModified) {
+									currentSystemPrompt = flattenSystemPrompt(
+										spliceContributedSections(systemPromptSections, contributedSections),
+									);
+								}
 							}
 						}
 					}
@@ -1014,6 +1063,17 @@ export class ExtensionRunner {
 					});
 				}
 			}
+		}
+
+		// The drop is documented behavior (a replacement is authoritative), but
+		// surfacing it makes order-dependent extension interactions debuggable.
+		if (systemPromptModified && contributedSections.length > 0 && replacedByExtensionPath) {
+			const ids = contributedSections.map((s) => s.id).join(", ");
+			this.emitError({
+				extensionPath: replacedByExtensionPath,
+				event: "before_agent_start",
+				error: `Contributed system prompt section(s) ${ids} were dropped: this extension replaced the system prompt with a string, which is authoritative for the turn`,
+			});
 		}
 
 		if (messages.length > 0 || systemPromptModified || contributedSections.length > 0) {

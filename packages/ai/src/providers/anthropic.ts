@@ -874,12 +874,14 @@ const claudeCodeIdentity = "You are Claude Code, Anthropic's official CLI for Cl
  *
  * Anthropic allows at most 4 `cache_control` breakpoints per request, and the
  * last tool and last user message already consume two, so the system prompt
- * must spend exactly one: it lands on a single stable block folding the
- * leading run of sections up to the first `cacheRetention: "none"` section.
+ * spends at most one: it lands on a single stable block folding the leading
+ * run of sections up to the first `cacheRetention: "none"` section (zero
+ * breakpoints when retention is "none" or the first section is volatile).
  * Everything from the first volatile section onward trails as uncached blocks
  * in array order — anything after the breakpoint is excluded from the cached
  * prefix, and preserving array order keeps the concatenated block text
- * byte-identical to the flattened prompt other providers send. On OAuth the
+ * byte-identical (for well-formed text; `sanitizeSurrogates` runs per block)
+ * to the flattened prompt other providers send. On OAuth the
  * Claude Code identity block stays first; caching is prefix-based, so the
  * stable block's breakpoint covers it without a second one (unlike the legacy
  * string path, which marks both for back-compat).

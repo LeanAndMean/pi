@@ -293,6 +293,12 @@ export interface CompactOptions {
 	onError?: (error: Error) => void;
 }
 
+/** How to queue input that arrives while the agent is streaming. */
+export type DeliverAs = "steer" | "followUp";
+
+/** DeliverAs plus "nextTurn", for custom messages injected alongside the next user prompt. */
+export type SendMessageDeliverAs = DeliverAs | "nextTurn";
+
 export interface DispatchUserInputOptions {
 	/**
 	 * When the agent is streaming, how to queue the input. Dispatching while
@@ -301,7 +307,7 @@ export interface DispatchUserInputOptions {
 	 * immediately; input consumed by an `input` handler returns without
 	 * rejecting).
 	 */
-	deliverAs?: "steer" | "followUp";
+	deliverAs?: DeliverAs;
 }
 
 /**
@@ -391,12 +397,12 @@ export interface ExtensionCommandContext extends ExtensionContext {
 export interface ReplacedSessionContext extends ExtensionCommandContext {
 	sendMessage<T = unknown>(
 		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
-		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
+		options?: { triggerTurn?: boolean; deliverAs?: SendMessageDeliverAs },
 	): Promise<void>;
 
 	sendUserMessage(
 		content: string | (TextContent | ImageContent)[],
-		options?: { deliverAs?: "steer" | "followUp" },
+		options?: { deliverAs?: DeliverAs },
 	): Promise<void>;
 
 	dispatchUserInput(input: string, options?: DispatchUserInputOptions): Promise<void>;
@@ -1203,17 +1209,14 @@ export interface ExtensionAPI {
 	/** Send a custom message to the session. */
 	sendMessage<T = unknown>(
 		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
-		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
+		options?: { triggerTurn?: boolean; deliverAs?: SendMessageDeliverAs },
 	): void;
 
 	/**
 	 * Send a user message to the agent. Always triggers a turn.
 	 * When the agent is streaming, use deliverAs to specify how to queue the message.
 	 */
-	sendUserMessage(
-		content: string | (TextContent | ImageContent)[],
-		options?: { deliverAs?: "steer" | "followUp" },
-	): void;
+	sendUserMessage(content: string | (TextContent | ImageContent)[], options?: { deliverAs?: DeliverAs }): void;
 
 	/** Append a custom entry to the session for state persistence (not sent to LLM). */
 	appendEntry<T = unknown>(customType: string, data?: T): void;
@@ -1432,12 +1435,12 @@ type HandlerFn = (...args: unknown[]) => Promise<unknown>;
 
 export type SendMessageHandler = <T = unknown>(
 	message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
-	options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
+	options?: { triggerTurn?: boolean; deliverAs?: SendMessageDeliverAs },
 ) => void;
 
 export type SendUserMessageHandler = (
 	content: string | (TextContent | ImageContent)[],
-	options?: { deliverAs?: "steer" | "followUp" },
+	options?: { deliverAs?: DeliverAs },
 ) => void;
 
 export type DispatchUserInputHandler = (input: string, options?: DispatchUserInputOptions) => Promise<void>;
