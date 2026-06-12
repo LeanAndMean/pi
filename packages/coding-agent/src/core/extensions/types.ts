@@ -227,12 +227,12 @@ export interface ExtensionUIContext {
 	 * - `keybindings`: KeybindingsManager for app-level keybindings
 	 *
 	 * For full app keybinding support (escape, ctrl+d, model switching, etc.),
-	 * extend `CustomEditor` from `@earendil-works/pi-coding-agent` and call
+	 * extend `CustomEditor` from `@leanandmean/pi-coding-agent` and call
 	 * `super.handleInput(data)` for keys you don't handle.
 	 *
 	 * @example
 	 * ```ts
-	 * import { CustomEditor } from "@earendil-works/pi-coding-agent";
+	 * import { CustomEditor } from "@leanandmean/pi-coding-agent";
 	 *
 	 * class VimEditor extends CustomEditor {
 	 *   private mode: "normal" | "insert" = "insert";
@@ -294,7 +294,13 @@ export interface CompactOptions {
 }
 
 export interface DispatchUserInputOptions {
-	/** When the agent is streaming, how to queue the input. */
+	/**
+	 * When the agent is streaming, how to queue the input. Dispatching while
+	 * streaming without `deliverAs` rejects, unless the input is handled before
+	 * it reaches the prompt queue (extension-registered commands execute
+	 * immediately; input consumed by an `input` handler returns without
+	 * rejecting).
+	 */
 	deliverAs?: "steer" | "followUp";
 }
 
@@ -330,7 +336,13 @@ export interface ExtensionContext {
 	compact(options?: CompactOptions): void;
 	/** Get the current effective system prompt. */
 	getSystemPrompt(): string;
-	/** Dispatch input through the same command/skill/template pipeline as typed editor input. */
+	/**
+	 * Dispatch input through the same pipeline as typed editor input:
+	 * extension-registered slash commands, prompt templates, and skills all
+	 * resolve as if the user had typed the text. Built-in interactive commands
+	 * (`/model`, `/login`, ...) are not part of this pipeline — dispatching one
+	 * sends the text to the LLM as a literal user message.
+	 */
 	dispatchUserInput(input: string, options?: DispatchUserInputOptions): Promise<void>;
 
 	/** Start a new session, optionally with initialization. */
