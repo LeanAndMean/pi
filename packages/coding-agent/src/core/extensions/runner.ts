@@ -1027,6 +1027,18 @@ export class ExtensionRunner {
 									event: "before_agent_start",
 									error: "Ignoring systemPromptSection: `id` and `text` must be strings",
 								});
+							} else if (section.cacheRetention !== undefined && section.cacheRetention !== "none") {
+								// Unvalidated, the section would silently count as stable and
+								// cached; per-turn content there invalidates the whole prompt
+								// cache every request. Request-level retention ("short"/"long")
+								// is a different knob: CreateAgentSessionOptions.cacheRetention.
+								this.emitError({
+									extensionPath: ext.path,
+									event: "before_agent_start",
+									error:
+										`Ignoring systemPromptSection "${section.id}": \`cacheRetention\` must be "none" or omitted, ` +
+										`got ${JSON.stringify(section.cacheRetention)}`,
+								});
 							} else {
 								if (
 									section.cacheRetention !== "none" &&

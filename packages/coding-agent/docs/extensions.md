@@ -1042,7 +1042,7 @@ Options:
 - `setup`: mutate the new session's `SessionManager` before `withSession` runs
 - `withSession`: run post-switch work against a fresh replacement-session context. Do not use captured old `pi` / command `ctx`; see [Session replacement lifecycle and footguns](#session-replacement-lifecycle-and-footguns).
 
-`newSession()` is available in all handlers, not just commands. It does not wait for the agent to go idle: calling it from an event handler while the agent is streaming tears down the current session immediately.
+`newSession()` is available in all handlers, not just commands, when running under one of the built-in modes (interactive, print, RPC); in SDK embeddings that never bind a command context, calling it rejects with an error. It does not wait for the agent to go idle: calling it from an event handler while the agent is streaming tears down the current session immediately.
 
 ## ExtensionCommandContext
 

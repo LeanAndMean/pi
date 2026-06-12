@@ -181,6 +181,17 @@ describe("Anthropic sectioned system blocks", () => {
 		expect(payload.system).toBeUndefined();
 	});
 
+	it("keeps the cached OAuth identity block for an empty section array", async () => {
+		const payload = await capturePayload(makeContext([]), { apiKey: "sk-ant-oat-fake" });
+
+		// OAuth requests MUST carry the Claude Code identity even with nothing
+		// else to send; it is the whole stable prefix, so it takes the breakpoint.
+		const blocks = systemBlocks(payload);
+		expect(blocks).toHaveLength(1);
+		expect(blocks[0].text).toBe("You are Claude Code, Anthropic's official CLI for Claude.");
+		expect(blocks[0].cache_control).toEqual({ type: "ephemeral" });
+	});
+
 	it("preserves array order for interleaved stable and volatile sections", async () => {
 		const interleaved: SystemPromptSection[] = [
 			{ id: "core", text: "You are pi." },

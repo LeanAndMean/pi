@@ -876,7 +876,9 @@ const claudeCodeIdentity = "You are Claude Code, Anthropic's official CLI for Cl
  * last tool and last user message already consume two, so the system prompt
  * spends at most one: it lands on a single stable block folding the leading
  * run of sections up to the first `cacheRetention: "none"` section (zero
- * breakpoints when retention is "none" or the first section is volatile).
+ * breakpoints when retention is "none"; when the first section is volatile
+ * the breakpoint moves to the OAuth identity block, or is omitted entirely
+ * on API-key auth).
  * Everything from the first volatile section onward trails as uncached blocks
  * in array order — anything after the breakpoint is excluded from the cached
  * prefix, and preserving array order keeps the concatenated block text
