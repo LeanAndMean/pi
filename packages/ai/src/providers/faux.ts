@@ -469,7 +469,9 @@ export function registerFauxProvider(options: RegisterFauxProviderOptions = {}):
 	const streamSimple: StreamFunction<string, SimpleStreamOptions> = (streamModel, context, streamOptions) =>
 		stream(streamModel, context, streamOptions);
 
-	registerApiProvider({ api, stream, streamSimple }, sourceId);
+	// Receives sections verbatim so tests can assert on the array the session
+	// sent; usage estimation flattens internally.
+	registerApiProvider({ api, stream, streamSimple, handlesSystemPromptSections: true }, sourceId);
 
 	function getModel(): Model<string>;
 	function getModel(requestedModelId: string): Model<string> | undefined;

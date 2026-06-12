@@ -351,7 +351,11 @@ export interface ExtensionContext {
 	 */
 	dispatchUserInput(input: string, options?: DispatchUserInputOptions): Promise<void>;
 
-	/** Start a new session, optionally with initialization. */
+	/**
+	 * Start a new session, optionally with initialization. Available under the
+	 * built-in modes (interactive, print, RPC); in SDK embeddings that never
+	 * bind a command context, calling it rejects with an error.
+	 */
 	newSession(options?: {
 		parentSession?: string;
 		setup?: (sessionManager: SessionManager) => Promise<void>;
@@ -1355,6 +1359,13 @@ export interface ProviderConfig {
 	api?: Api;
 	/** Optional streamSimple handler for custom APIs. */
 	streamSimple?: (model: Model<Api>, context: Context, options?: SimpleStreamOptions) => AssistantMessageEventStream;
+	/**
+	 * Declares that `streamSimple` accepts `SystemPromptSection[]` in
+	 * `Context.systemPrompt`. When omitted, a sections array is flattened to
+	 * the equivalent single string before dispatch, so handlers written
+	 * against the legacy `string` contract keep working unchanged.
+	 */
+	handlesSystemPromptSections?: boolean;
 	/** Custom headers to include in requests. */
 	headers?: Record<string, string>;
 	/** If true, adds Authorization: Bearer header with the resolved API key. */

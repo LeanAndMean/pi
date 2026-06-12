@@ -7,6 +7,7 @@ import type {
 	StreamFunction,
 	StreamOptions,
 } from "./types.js";
+import { flattenSystemPrompt } from "./utils/system-prompt.js";
 
 export type ApiStreamFunction = (
 	model: Model<Api>,
@@ -24,6 +25,14 @@ export interface ApiProvider<TApi extends Api = Api, TOptions extends StreamOpti
 	api: TApi;
 	stream: StreamFunction<TApi, TOptions>;
 	streamSimple: StreamFunction<TApi, SimpleStreamOptions>;
+	/**
+	 * Declares that this provider accepts `SystemPromptSection[]` in
+	 * `Context.systemPrompt`. When omitted, the registry flattens a sections
+	 * array to the equivalent single string (on a shallow context copy) before
+	 * dispatching, so providers written against the legacy `string` contract
+	 * keep working unchanged.
+	 */
+	handlesSystemPromptSections?: boolean;
 }
 
 interface ApiProviderInternal {
@@ -39,27 +48,36 @@ type RegisteredApiProvider = {
 
 const apiProviderRegistry = new Map<string, RegisteredApiProvider>();
 
+function normalizeContext(context: Context, handlesSystemPromptSections: boolean): Context {
+	if (handlesSystemPromptSections || !Array.isArray(context.systemPrompt)) {
+		return context;
+	}
+	return { ...context, systemPrompt: flattenSystemPrompt(context.systemPrompt) };
+}
+
 function wrapStream<TApi extends Api, TOptions extends StreamOptions>(
 	api: TApi,
 	stream: StreamFunction<TApi, TOptions>,
+	handlesSystemPromptSections: boolean,
 ): ApiStreamFunction {
 	return (model, context, options) => {
 		if (model.api !== api) {
 			throw new Error(`Mismatched api: ${model.api} expected ${api}`);
 		}
-		return stream(model as Model<TApi>, context, options as TOptions);
+		return stream(model as Model<TApi>, normalizeContext(context, handlesSystemPromptSections), options as TOptions);
 	};
 }
 
 function wrapStreamSimple<TApi extends Api>(
 	api: TApi,
 	streamSimple: StreamFunction<TApi, SimpleStreamOptions>,
+	handlesSystemPromptSections: boolean,
 ): ApiStreamSimpleFunction {
 	return (model, context, options) => {
 		if (model.api !== api) {
 			throw new Error(`Mismatched api: ${model.api} expected ${api}`);
 		}
-		return streamSimple(model as Model<TApi>, context, options);
+		return streamSimple(model as Model<TApi>, normalizeContext(context, handlesSystemPromptSections), options);
 	};
 }
 
@@ -67,11 +85,12 @@ export function registerApiProvider<TApi extends Api, TOptions extends StreamOpt
 	provider: ApiProvider<TApi, TOptions>,
 	sourceId?: string,
 ): void {
+	const handlesSystemPromptSections = provider.handlesSystemPromptSections === true;
 	apiProviderRegistry.set(provider.api, {
 		provider: {
 			api: provider.api,
-			stream: wrapStream(provider.api, provider.stream),
-			streamSimple: wrapStreamSimple(provider.api, provider.streamSimple),
+			stream: wrapStream(provider.api, provider.stream, handlesSystemPromptSections),
+			streamSimple: wrapStreamSimple(provider.api, provider.streamSimple, handlesSystemPromptSections),
 		},
 		sourceId,
 	});

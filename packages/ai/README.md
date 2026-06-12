@@ -110,7 +110,10 @@ const context: Context = {
 // adapter only; every other provider (including Bedrock, which still sets its
 // own cachePoint) flattens sections in array order. Use
 // flattenSystemPrompt(context.systemPrompt) to get the equivalent
-// single-string prompt.
+// single-string prompt. Providers registered via registerApiProvider only
+// receive the array if they declare handlesSystemPromptSections: true;
+// otherwise the registry flattens it before dispatch, preserving the legacy
+// string contract.
 const sectioned: Context = {
   systemPrompt: [
     { id: 'core', text: 'You are a helpful assistant.' },

@@ -200,7 +200,13 @@ export interface PromptOptions {
 	expandPromptTemplates?: boolean;
 	/** Image attachments */
 	images?: ImageContent[];
-	/** When streaming, how to queue the message: "steer" (interrupt) or "followUp" (wait). Required if streaming. */
+	/**
+	 * When streaming, how to queue the message: "steer" (interrupt) or
+	 * "followUp" (wait). Prompting while streaming without it rejects, unless
+	 * the text is handled before it reaches the prompt queue (extension
+	 * commands execute immediately; input consumed by an `input` handler
+	 * returns without rejecting).
+	 */
 	streamingBehavior?: DeliverAs;
 	/** Source of input for extension input event handlers. Defaults to "interactive". */
 	source?: InputSource;

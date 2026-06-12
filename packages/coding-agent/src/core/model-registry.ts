@@ -869,6 +869,7 @@ export class ModelRegistry {
 					api: config.api!,
 					stream: (model, context, options) => streamSimple(model, context, options as SimpleStreamOptions),
 					streamSimple,
+					handlesSystemPromptSections: config.handlesSystemPromptSections,
 				},
 				`provider:${providerName}`,
 			);
@@ -931,6 +932,7 @@ export interface ProviderConfigInput {
 	apiKey?: string;
 	api?: Api;
 	streamSimple?: (model: Model<Api>, context: Context, options?: SimpleStreamOptions) => AssistantMessageEventStream;
+	handlesSystemPromptSections?: boolean;
 	headers?: Record<string, string>;
 	authHeader?: boolean;
 	/** OAuth provider for /login support */

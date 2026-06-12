@@ -808,6 +808,82 @@ describe("ExtensionRunner", () => {
 			);
 			expect(combined?.systemPrompt).toBe("authoritative replacement");
 		});
+
+		it("keeps a contribution made after a string replacement out of the chained prompt and attributes the drop to the replacer", async () => {
+			const extCode1 = `
+				export default function(pi) {
+					pi.on("before_agent_start", async () => {
+						return {
+							systemPrompt: "authoritative replacement",
+						};
+					});
+				}
+			`;
+			const extCode2 = `
+				export default function(pi) {
+					pi.on("before_agent_start", async () => {
+						return {
+							systemPromptSection: { id: "ext-late", text: "\\n\\nlate contribution" },
+						};
+					});
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "late-1-replacer.ts"), extCode1);
+			fs.writeFileSync(path.join(extensionsDir, "late-2-contributor.ts"), extCode2);
+
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			expect(result.errors).toEqual([]);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			const errors: Array<{ extensionPath: string; error: string }> = [];
+			runner.onError((error) => errors.push({ extensionPath: error.extensionPath, error: error.error }));
+			runner.bindCore(extensionActions, extensionContextActions);
+
+			const combined = await runner.emitBeforeAgentStart("hello", undefined, [{ id: "core", text: "base" }], {
+				cwd: tempDir,
+			});
+
+			expect(errors).toHaveLength(1);
+			expect(errors[0].extensionPath).toContain("late-1-replacer.ts");
+			expect(errors[0].error).toBe(
+				"Contributed system prompt section(s) ext-late were dropped: this extension replaced the system prompt with a string, which is authoritative for the turn",
+			);
+			// The late contribution is accepted but never folded into the chained prompt.
+			expect(combined?.systemPrompt).toBe("authoritative replacement");
+			expect(combined?.systemPromptSections).toEqual([{ id: "ext-late", text: "\n\nlate contribution" }]);
+		});
+
+		it("lets the string win when one extension returns both systemPrompt and systemPromptSection, attributing the drop to itself", async () => {
+			const extCode = `
+				export default function(pi) {
+					pi.on("before_agent_start", async () => {
+						return {
+							systemPrompt: "replacement from both",
+							systemPromptSection: { id: "ext-own", text: "\\n\\nown section" },
+						};
+					});
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "both-fields.ts"), extCode);
+
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			expect(result.errors).toEqual([]);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			const errors: Array<{ extensionPath: string; error: string }> = [];
+			runner.onError((error) => errors.push({ extensionPath: error.extensionPath, error: error.error }));
+			runner.bindCore(extensionActions, extensionContextActions);
+
+			const combined = await runner.emitBeforeAgentStart("hello", undefined, [{ id: "core", text: "base" }], {
+				cwd: tempDir,
+			});
+
+			expect(errors).toHaveLength(1);
+			expect(errors[0].extensionPath).toContain("both-fields.ts");
+			expect(errors[0].error).toBe(
+				"Contributed system prompt section(s) ext-own were dropped: this extension replaced the system prompt with a string, which is authoritative for the turn",
+			);
+			expect(combined?.systemPrompt).toBe("replacement from both");
+			expect(combined?.systemPromptSections).toEqual([{ id: "ext-own", text: "\n\nown section" }]);
+		});
 	});
 
 	describe("spliceContributedSections", () => {
