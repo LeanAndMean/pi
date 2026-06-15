@@ -398,6 +398,21 @@ describe("buildSystemPrompt byte-identity with pre-refactor output", () => {
 		}
 	}
 
+	// Default path (no customPrompt) with an empty selectedTools array — distinct
+	// from `undefined`, which the matrix above covers — plus visible skills. This
+	// is the exact edge raised during review; locking it against the oracle guards
+	// the byte-identity contract for the empty-tools branch.
+	test("default prompt + empty selected tools + visible skills", () => {
+		const options: BuildSystemPromptOptions = {
+			selectedTools: [],
+			toolSnippets: { read: "Read file contents", bash: "Execute bash commands" },
+			skills,
+			cwd: "/tmp/project",
+		};
+
+		expect(buildSystemPrompt(options)).toBe(legacyBuildSystemPrompt(options));
+	});
+
 	test("custom prompt + selected tools with read + visible skills", () => {
 		const options: BuildSystemPromptOptions = {
 			customPrompt: "You are a test assistant.",

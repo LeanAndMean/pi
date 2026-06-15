@@ -198,6 +198,42 @@ describe("AgentSession queue characterization", () => {
 		expect(getUserTexts(harness)).toEqual(["start"]);
 	});
 
+	it("resolves dispatchUserInput while streaming when an input handler consumes the text", async () => {
+		const consumed: string[] = [];
+		const waiting = await createWaitingHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.on("input", async (event) => {
+						// Only consume the dispatched text; let the initial "start"
+						// prompt through so the wait tool actually begins streaming.
+						if (event.text !== "consumed while streaming") return { action: "continue" };
+						consumed.push(event.text);
+						return { action: "handled" };
+					});
+				},
+			],
+		});
+		const { harness, waitForToolStart, promptPromise, releaseToolExecution } = waiting;
+		harnesses.push(harness);
+
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall("wait", {}), { stopReason: "toolUse" }),
+			fauxAssistantMessage("done"),
+		]);
+
+		await waitForToolStart;
+		// No deliverAs would normally reject while streaming, but the input handler
+		// consumes the text before it reaches the prompt queue, so the call resolves.
+		await expect(harness.session.dispatchUserInput("consumed while streaming")).resolves.toBeUndefined();
+
+		releaseToolExecution();
+		await promptPromise;
+
+		expect(consumed).toEqual(["consumed while streaming"]);
+		// The consumed text was never enqueued as a user message.
+		expect(getUserTexts(harness)).toEqual(["start"]);
+	});
+
 	it("queues dispatchUserInput with deliverAs followUp until the current run finishes", async () => {
 		const waiting = await createWaitingHarness();
 		const { harness, waitForToolStart, promptPromise, releaseToolExecution } = waiting;

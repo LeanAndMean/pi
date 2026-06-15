@@ -41,7 +41,14 @@ import { transformMessages } from "./transform-messages.js";
 
 /**
  * Resolve cache retention preference.
- * Defaults to "short" and uses PI_CACHE_RETENTION for backward compatibility.
+ *
+ * Defaults to "short" and only honors PI_CACHE_RETENTION === "long" — this is
+ * the low-level provider fallback for callers that hit the adapter directly.
+ * In the coding-agent path this default rarely fires: the SDK's own
+ * resolveCacheRetention (packages/coding-agent/src/core/sdk.ts, which defaults
+ * to "long") resolves first and passes a concrete value down, so `cacheRetention`
+ * is normally already set when it reaches here. Keep the two defaults in sync
+ * intentionally — they differ on purpose (backward-compat vs. SDK default).
  */
 function resolveCacheRetention(cacheRetention?: CacheRetention): CacheRetention {
 	if (cacheRetention) {

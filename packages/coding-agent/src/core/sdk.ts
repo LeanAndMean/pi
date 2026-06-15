@@ -138,6 +138,13 @@ function isCacheRetention(value: string): value is CacheRetention {
 
 // resolveCacheRetention runs on every createAgentSession call (including /new),
 // so warn about a bad env var only once per process to keep it out of the TUI.
+//
+// Defaults to "long" (1h tier). NOTE: the Anthropic adapter has a same-named
+// resolveCacheRetention (packages/ai/src/providers/anthropic.ts) that defaults
+// to "short" for backward compatibility. The divergence is intentional: this
+// SDK resolver runs first and passes a concrete value down, so the adapter's
+// "short" default is effectively shadowed in the coding-agent path. Keep both
+// in mind when changing either default.
 let warnedInvalidCacheRetention = false;
 
 function resolveCacheRetention(option: CacheRetention | undefined): CacheRetention {

@@ -60,6 +60,7 @@ import { type AgentSession, type AgentSessionEvent, parseSkillBlock } from "../.
 import { type AgentSessionRuntime, SessionImportFileNotFoundError } from "../../core/agent-session-runtime.js";
 import type {
 	AutocompleteProviderFactory,
+	DeliverAs,
 	EditorFactory,
 	ExtensionCommandContext,
 	ExtensionContext,
@@ -161,7 +162,7 @@ class ExpandableText extends Text implements Expandable {
 
 type CompactionQueuedMessage = {
 	text: string;
-	mode: "steer" | "followUp";
+	mode: DeliverAs;
 };
 
 const DEAD_TERMINAL_ERROR_CODES = new Set(["EIO", "EPIPE", "ENOTCONN"]);
@@ -3645,7 +3646,7 @@ export class InteractiveMode {
 		return allQueued.length;
 	}
 
-	private queueCompactionMessage(text: string, mode: "steer" | "followUp"): void {
+	private queueCompactionMessage(text: string, mode: DeliverAs): void {
 		this.compactionQueuedMessages.push({ text, mode });
 		this.editor.addToHistory?.(text);
 		this.editor.setText("");

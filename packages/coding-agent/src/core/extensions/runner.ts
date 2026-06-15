@@ -265,15 +265,20 @@ export class ExtensionRunner {
 	private getContextUsageFn: () => ContextUsage | undefined = () => undefined;
 	private compactFn: (options?: CompactOptions) => void = () => {};
 	private getSystemPromptFn: () => string = () => "";
-	// Unbound defaults reject rather than fabricate success: silently dropping
-	// input or reporting a session swap that never happened hides real bugs in
-	// headless/SDK embeddings that never bind these handlers.
+	// The two defaults immediately below throw rather than fabricate success:
+	// silently dropping input (dispatchUserInput) or reporting a session swap
+	// that never happened (newSession) hides real bugs in headless/SDK
+	// embeddings that never bind these handlers.
 	private dispatchUserInputFn: DispatchUserInputHandler = async () => {
 		throw new Error("dispatchUserInput is not available in this session mode (no input pipeline bound)");
 	};
 	private newSessionHandler: NewSessionHandler = async () => {
 		throw new Error("newSession is not available in this session mode (no command context bound)");
 	};
+	// fork/navigateTree/switchSession deliberately differ: when unbound they
+	// report a no-op cancellation ({ cancelled: false }) instead of throwing,
+	// since session-tree navigation that simply doesn't happen is a benign
+	// no-op for an embedding that never wired up tree navigation.
 	private forkHandler: ForkHandler = async () => ({ cancelled: false });
 	private navigateTreeHandler: NavigateTreeHandler = async () => ({ cancelled: false });
 	private switchSessionHandler: SwitchSessionHandler = async () => ({ cancelled: false });
