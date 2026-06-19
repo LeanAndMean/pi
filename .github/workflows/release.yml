@@ -1,0 +1,59 @@
+name: Release
+
+# Publishes @leanandmean/pi-coding-agent to npm when a version tag is pushed.
+# Tag format: v0.74.0-scramjet.N
+# Trigger: `gh release create v<version>` or manual `git tag v<version> && git push origin v<version>`
+on:
+  push:
+    tags: ["v[0-9]*"]
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: publish to npm
+    runs-on: ubuntu-latest
+    concurrency:
+      group: release-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Verify tag matches package.json version
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG=$(jq -r '.version' packages/coding-agent/package.json)
+          if [ "$TAG" != "$PKG" ]; then
+            echo "Error: git tag v$TAG does not match packages/coding-agent/package.json version $PKG." >&2
+            exit 1
+          fi
+          echo "OK: tag and package.json agree on $PKG."
+
+      - name: Verify package name
+        run: |
+          NAME=$(jq -r '.name' packages/coding-agent/package.json)
+          if [ "$NAME" != "@leanandmean/pi-coding-agent" ]; then
+            echo "Error: package name is $NAME, expected @leanandmean/pi-coding-agent." >&2
+            echo "Rename the package before tagging." >&2
+            exit 1
+          fi
+          echo "OK: package name is $NAME."
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build
+        run: npm run build -w packages/tui -w packages/ai -w packages/agent -w packages/coding-agent
+
+      - name: Publish to npm
+        working-directory: packages/coding-agent
+        run: npm publish --access public --tag scramjet
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
