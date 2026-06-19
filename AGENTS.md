@@ -1,5 +1,15 @@
 # Development Rules
 
+## Fork Scope
+
+This is a fork of the pi monorepo. **Only `packages/coding-agent`** is published (as `@leanandmean/pi-coding-agent`). The sole consumer is the `scramjet` package.
+
+- The published npm package contains only `packages/coding-agent/dist/` and its docs/examples.
+- It depends on `pi-ai`, `pi-agent-core`, and `pi-tui` as npm dependencies, not bundled source.
+- `packages/web-ui` is **not** a dependency and is **never** needed for building, checking, or testing our published package.
+- When modifying CI workflows, scope build/check steps to only the packages `coding-agent` needs: `tui`, `ai`, `agent`, `coding-agent`. Never use the root `npm run build` or `npm run check` — they include `web-ui` and the full upstream test suite, which may have stale upstream type references.
+- The root `npm run check` also type-checks upstream test files (e.g., `packages/ai/test/`) which reference model names that drift with upstream changes. Use per-package `tsgo -p <pkg>/tsconfig.build.json --noEmit` instead.
+
 ## Conversational Style
 
 - Keep answers short and concise
