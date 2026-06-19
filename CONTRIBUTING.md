@@ -58,7 +58,7 @@ npm run check
 
 Both must pass.
 
-Do not edit `CHANGELOG.md`. Changelog entries are added by maintainers.
+Update `packages/coding-agent/CHANGELOG.md` with your changes under `## [Unreleased]`.
 
 If you are adding a new provider to `packages/ai`, see `AGENTS.md` for required tests.
 
