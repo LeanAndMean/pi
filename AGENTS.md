@@ -2,12 +2,12 @@
 
 ## Fork Scope
 
-This is a fork of the pi monorepo. **Only `packages/coding-agent`** is published (as `@leanandmean/pi-coding-agent`). The sole consumer is the `scramjet` package.
+This is a fork of the pi monorepo. Four packages are published under `@leanandmean/` in lockstep: `pi-tui`, `pi-ai`, `pi-agent-core`, `pi-coding-agent`. The sole consumer is the `scramjet` package.
 
-- The published npm package contains only `packages/coding-agent/dist/` and its docs/examples.
-- It depends on `pi-ai`, `pi-agent-core`, and `pi-tui` as npm dependencies, not bundled source.
-- `packages/web-ui` is **not** a dependency and is **never** needed for building, checking, or testing our published package.
-- When modifying CI workflows, scope build/check steps to only the packages `coding-agent` needs: `tui`, `ai`, `agent`, `coding-agent`. Never use the root `npm run build` or `npm run check` — they include `web-ui` and the full upstream test suite, which may have stale upstream type references.
+- All four packages share the same version (`<upstream>-scramjet.<N>`).
+- Source always uses `@earendil-works/` names; the release workflow renames to `@leanandmean/` at publish time.
+- `packages/web-ui` is **not** published and is **never** needed for building, checking, or testing.
+- When modifying CI workflows, scope build/check steps to only the published packages: `tui`, `ai`, `agent`, `coding-agent`. Never use the root `npm run build` or `npm run check` — they include `web-ui` and the full upstream test suite, which may have stale upstream type references.
 - The root `npm run check` also type-checks upstream test files (e.g., `packages/ai/test/`) which reference model names that drift with upstream changes. Use per-package `tsgo -p <pkg>/tsconfig.build.json --noEmit` instead.
 
 ## Conversational Style
@@ -185,54 +185,60 @@ Create provider file exporting:
 
 ## Releasing
 
-This is a fork that publishes **only `@leanandmean/pi-coding-agent`** to npm. The upstream `release.mjs` script and lockstep versioning do not apply here.
+This fork publishes four packages to npm under `@leanandmean/` in lockstep:
+- `@leanandmean/pi-tui`
+- `@leanandmean/pi-ai`
+- `@leanandmean/pi-agent-core`
+- `@leanandmean/pi-coding-agent`
+
+All four share the same version. The release workflow renames them from `@earendil-works/` to `@leanandmean/` and rewrites inter-package deps at publish time. Source always uses `@earendil-works/` names for workspace resolution.
 
 ### Version scheme
 
-`<upstream-base>-scramjet.<N>` — e.g. `0.74.0-scramjet.1`, `0.74.0-scramjet.2`.
+`<upstream-base>-scramjet.<N>` — e.g. `0.74.0-scramjet.1`, `0.74.0-scramjet.4`.
 
 Increment `<N>` for each release. When rebasing on a new upstream version, reset `<N>` to 1 with the new base (e.g. `0.75.0-scramjet.1`).
 
 ### Steps
 
-1. **Ensure `npm run check` passes.**
+1. **Ensure the scoped check passes** (pre-commit hook runs this automatically).
 
-2. **Bump the version** in `packages/coding-agent/package.json`:
+2. **Bump the version** in all four packages:
    ```bash
-   cd packages/coding-agent
-   npm version 0.74.0-scramjet.2 --no-git-tag-version
+   npm version 0.74.0-scramjet.4 --no-git-tag-version \
+     -w packages/tui -w packages/ai -w packages/agent -w packages/coding-agent
    ```
 
-3. **Do NOT rename the package.** The source must keep the name `@earendil-works/pi-coding-agent`
-   so that npm workspace resolution works (the root `package.json` depends on it). The release
-   workflow renames it to `@leanandmean/pi-coding-agent` at publish time.
+3. **Do NOT rename packages.** Source must keep `@earendil-works/` names for workspace resolution.
+   The release workflow renames to `@leanandmean/` at publish time.
 
 4. **Commit and push**:
    ```bash
-   git add packages/coding-agent/package.json
-   git commit -m "Release @leanandmean/pi-coding-agent@0.74.0-scramjet.2"
+   git add packages/tui/package.json packages/ai/package.json \
+     packages/agent/package.json packages/coding-agent/package.json
+   git commit -m "Release @leanandmean/pi-*@0.74.0-scramjet.4"
    git push
    ```
 
 5. **Create the release** (triggers CI publish via `.github/workflows/release.yml`):
    ```bash
-   gh release create v0.74.0-scramjet.2 --title "v0.74.0-scramjet.2" --notes "<release notes>"
+   gh release create v0.74.0-scramjet.4 --title "v0.74.0-scramjet.4" --notes "<release notes>"
    ```
-   CI builds, renames the package to `@leanandmean/pi-coding-agent`, and runs
-   `npm publish --access public --tag scramjet`.
+   CI builds all four packages, renames them to `@leanandmean/`, rewrites inter-package
+   deps to exact versions, and publishes in dependency order with `--tag scramjet`.
 
 6. **Update scramjet** (`~/repos/scramjet/package.json`):
    ```bash
-   # Update the alias to point to the new version
-   "@earendil-works/pi-coding-agent": "npm:@leanandmean/pi-coding-agent@0.74.0-scramjet.2"
+   "@earendil-works/pi-coding-agent": "npm:@leanandmean/pi-coding-agent@0.74.0-scramjet.4"
    ```
+   Only `coding-agent` needs an alias in scramjet — the others are pulled transitively.
 
 ### What NOT to do
 
 - Do NOT run `npm run release:patch` / `npm run release:minor` — those are upstream scripts
-- Do NOT publish all workspaces (`npm publish -ws`) — only `packages/coding-agent` is published
 - Do NOT use the upstream `scripts/release.mjs`
 - Do NOT run `npm publish` locally — CI handles it on tag push
+- Do NOT rename packages in source — only the release workflow does this
 
 ## **CRITICAL** Git Rules for Parallel Agents **CRITICAL**
 
