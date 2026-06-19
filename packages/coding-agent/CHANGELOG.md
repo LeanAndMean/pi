@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- Fixed parallel subagent results being truncated to 100 characters instead of returning full output ([#11](https://github.com/LeanAndMean/pi/issues/11))
+
+### Added
+
+- Added CI release workflow for publishing `@leanandmean/pi-coding-agent` to npm on tag push ([#12](https://github.com/LeanAndMean/pi/pull/12))
+
 ## [0.74.0] - 2026-05-07
 
 ### Changed
