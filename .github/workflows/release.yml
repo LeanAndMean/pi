@@ -36,16 +36,6 @@ jobs:
           fi
           echo "OK: tag and package.json agree on $PKG."
 
-      - name: Verify package name
-        run: |
-          NAME=$(jq -r '.name' packages/coding-agent/package.json)
-          if [ "$NAME" != "@leanandmean/pi-coding-agent" ]; then
-            echo "Error: package name is $NAME, expected @leanandmean/pi-coding-agent." >&2
-            echo "Rename the package before tagging." >&2
-            exit 1
-          fi
-          echo "OK: package name is $NAME."
-
       - name: Install dependencies
         run: npm install
 
@@ -54,6 +44,11 @@ jobs:
 
       - name: Publish to npm
         working-directory: packages/coding-agent
-        run: npm publish --access public --tag scramjet
+        run: |
+          # Rename package for npm publication (workspace uses @earendil-works
+          # scope for internal resolution; published under @leanandmean scope)
+          jq '.name = "@leanandmean/pi-coding-agent"' package.json > package.json.tmp
+          mv package.json.tmp package.json
+          npm publish --access public --tag scramjet
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

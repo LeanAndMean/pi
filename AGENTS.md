@@ -203,8 +203,9 @@ Increment `<N>` for each release. When rebasing on a new upstream version, reset
    npm version 0.74.0-scramjet.2 --no-git-tag-version
    ```
 
-3. **Rename the package** (if not already renamed on this branch):
-   Change `"name"` in `packages/coding-agent/package.json` from `@earendil-works/pi-coding-agent` to `@leanandmean/pi-coding-agent`.
+3. **Do NOT rename the package.** The source must keep the name `@earendil-works/pi-coding-agent`
+   so that npm workspace resolution works (the root `package.json` depends on it). The release
+   workflow renames it to `@leanandmean/pi-coding-agent` at publish time.
 
 4. **Commit and push**:
    ```bash
@@ -217,7 +218,7 @@ Increment `<N>` for each release. When rebasing on a new upstream version, reset
    ```bash
    gh release create v0.74.0-scramjet.2 --title "v0.74.0-scramjet.2" --notes "<release notes>"
    ```
-   CI verifies the tag matches `packages/coding-agent/package.json`, builds, and runs
+   CI builds, renames the package to `@leanandmean/pi-coding-agent`, and runs
    `npm publish --access public --tag scramjet`.
 
 6. **Update scramjet** (`~/repos/scramjet/package.json`):
