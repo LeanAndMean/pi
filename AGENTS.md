@@ -9,6 +9,9 @@ This is a fork of the pi monorepo. Four packages are published under `@leanandme
 - `packages/web-ui` is **not** published and is **never** needed for building, checking, or testing.
 - When modifying CI workflows, scope build/check steps to only the published packages: `tui`, `ai`, `agent`, `coding-agent`. Never use the root `npm run build` or `npm run check` — they include `web-ui` and the full upstream test suite, which may have stale upstream type references.
 - The root `npm run check` also type-checks upstream test files (e.g., `packages/ai/test/`) which reference model names that drift with upstream changes. Use per-package `tsgo -p <pkg>/tsconfig.build.json --noEmit` instead.
+- Internal dependency ranges between published packages must use prerelease-compatible versions (e.g., `^0.74.0-scramjet.4`), not bare `^0.74.0`. Semver treats prereleases as incompatible with the base range, causing npm to install from the registry instead of linking the workspace.
+- The upstream lockfile is generated on macOS and lacks linux native bindings. CI uses `npm install` (not `npm ci`) to resolve platform-specific optional deps at install time.
+- npm does not allow republishing a version that was previously published and unpublished. Always increment the scramjet number if a publish is retracted.
 
 ## Conversational Style
 
@@ -31,7 +34,7 @@ This is a fork of the pi monorepo. Four packages are published under `@leanandme
 
 ## Commands
 
-- After code changes (not documentation changes): `npm run check` (get full output, no tail). Fix all errors, warnings, and infos before committing.
+- After code changes (not documentation changes): run the scoped check that the pre-commit hook uses (biome + per-package tsgo). Do NOT use `npm run check` — it runs the root check which includes web-ui and stale upstream test types. The pre-commit hook handles this automatically on commit.
 - Note: `npm run check` does not run tests.
 - NEVER run: `npm run dev`, `npm run build`, `npm test`
 - Only run specific tests if user instructs: `npx tsx ../../node_modules/vitest/dist/cli.js --run test/specific.test.ts`
@@ -227,11 +230,15 @@ Increment `<N>` for each release. When rebasing on a new upstream version, reset
    CI builds all four packages, renames them to `@leanandmean/`, rewrites inter-package
    deps to exact versions, and publishes in dependency order with `--tag scramjet`.
 
-6. **Update scramjet** (`~/repos/scramjet/package.json`):
-   ```bash
+6. **Update scramjet** (`~/repos/scramjet/package.json`) — all four aliases:
+   ```json
+   "@earendil-works/pi-tui": "npm:@leanandmean/pi-tui@0.74.0-scramjet.4",
+   "@earendil-works/pi-ai": "npm:@leanandmean/pi-ai@0.74.0-scramjet.4",
+   "@earendil-works/pi-agent-core": "npm:@leanandmean/pi-agent-core@0.74.0-scramjet.4",
    "@earendil-works/pi-coding-agent": "npm:@leanandmean/pi-coding-agent@0.74.0-scramjet.4"
    ```
-   Only `coding-agent` needs an alias in scramjet — the others are pulled transitively.
+   Scramjet directly imports from `coding-agent` and `tui`; `ai` and `agent-core` are
+   aliased so that transitive imports resolve to our fork instead of upstream.
 
 ### What NOT to do
 
