@@ -95,7 +95,7 @@ tmux kill-session -t pi-test
 
 ## Changelog
 
-Location: `packages/*/CHANGELOG.md` (each package has its own)
+Only `packages/coding-agent/CHANGELOG.md` is maintained for this fork.
 
 ### Format
 
@@ -109,16 +109,16 @@ Use these sections under `## [Unreleased]`:
 
 ### Rules
 
-- Before adding entries, read the full `[Unreleased]` section to see which subsections already exist
+- Add changelog entries during pre-merge or at merge time (not reserved for maintainers in this fork)
 - New entries ALWAYS go under `## [Unreleased]` section
 - Append to existing subsections (e.g., `### Fixed`), do not create duplicates
-- NEVER modify already-released version sections (e.g., `## [0.12.2]`)
+- NEVER modify already-released version sections
 - Each version section is immutable once released
 
 ### Attribution
 
-- **Internal changes (from issues)**: `Fixed foo bar ([#123](https://github.com/earendil-works/pi-mono/issues/123))`
-- **External contributions**: `Added feature X ([#456](https://github.com/earendil-works/pi-mono/pull/456) by [@username](https://github.com/username))`
+- **Internal changes (from issues)**: `Fixed foo bar ([#123](https://github.com/LeanAndMean/pi/issues/123))`
+- **External contributions**: `Added feature X ([#456](https://github.com/LeanAndMean/pi/pull/456) by [@username](https://github.com/username))`
 
 ## Adding a New LLM Provider (packages/ai)
 
@@ -175,24 +175,52 @@ Create provider file exporting:
 
 ## Releasing
 
-**Lockstep versioning**: All packages always share the same version number. Every release updates all packages together.
+This is a fork that publishes **only `@leanandmean/pi-coding-agent`** to npm. The upstream `release.mjs` script and lockstep versioning do not apply here.
 
-**Version semantics** (no major releases):
+### Version scheme
 
-- `patch`: Bug fixes and new features
-- `minor`: API breaking changes
+`<upstream-base>-scramjet.<N>` — e.g. `0.74.0-scramjet.1`, `0.74.0-scramjet.2`.
+
+Increment `<N>` for each release. When rebasing on a new upstream version, reset `<N>` to 1 with the new base (e.g. `0.75.0-scramjet.1`).
 
 ### Steps
 
-1. **Update CHANGELOGs**: Ensure all changes since last release are documented in the `[Unreleased]` section of each affected package's CHANGELOG.md
+1. **Ensure `npm run check` passes.**
 
-2. **Run release script**:
+2. **Bump the version** in `packages/coding-agent/package.json`:
    ```bash
-   npm run release:patch    # Fixes and additions
-   npm run release:minor    # API breaking changes
+   cd packages/coding-agent
+   npm version 0.74.0-scramjet.2 --no-git-tag-version
    ```
 
-The script handles: version bump, CHANGELOG finalization, commit, tag, publish, and adding new `[Unreleased]` sections.
+3. **Rename the package** (if not already renamed on this branch):
+   Change `"name"` in `packages/coding-agent/package.json` from `@earendil-works/pi-coding-agent` to `@leanandmean/pi-coding-agent`.
+
+4. **Build and publish**:
+   ```bash
+   cd packages/coding-agent
+   npm publish --access public --tag scramjet
+   ```
+   The `--tag scramjet` dist-tag keeps this separate from the upstream `latest` tag.
+
+5. **Commit the version bump** (on main or the release branch):
+   ```bash
+   git add packages/coding-agent/package.json
+   git commit -m "Release @leanandmean/pi-coding-agent@0.74.0-scramjet.2"
+   git push
+   ```
+
+6. **Update scramjet** (`~/repos/scramjet/package.json`):
+   ```bash
+   # Update the alias to point to the new version
+   "@earendil-works/pi-coding-agent": "npm:@leanandmean/pi-coding-agent@0.74.0-scramjet.2"
+   ```
+
+### What NOT to do
+
+- Do NOT run `npm run release:patch` / `npm run release:minor` — those are upstream scripts
+- Do NOT publish all workspaces (`npm publish -ws`) — only `packages/coding-agent` is published
+- Do NOT use the upstream `scripts/release.mjs`
 
 ## **CRITICAL** Git Rules for Parallel Agents **CRITICAL**
 
