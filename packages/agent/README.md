@@ -162,7 +162,7 @@ The last message in context must be `user` or `toolResult` (not `assistant`).
 const agent = new Agent({
   // Initial state
   initialState: {
-    systemPrompt: string,
+    systemPrompt: string | SystemPromptSection[],
     model: Model<any>,
     thinkingLevel: "off" | "minimal" | "low" | "medium" | "high" | "xhigh",
     tools: AgentTool<any>[],
@@ -224,7 +224,7 @@ const agent = new Agent({
 
 ```typescript
 interface AgentState {
-  systemPrompt: string;
+  systemPrompt: string | SystemPromptSection[];
   model: Model<any>;
   thinkingLevel: ThinkingLevel;
   tools: AgentTool<any>[];
@@ -237,6 +237,8 @@ interface AgentState {
 ```
 
 Access state via `agent.state`.
+
+`systemPrompt` accepts either a plain string or an ordered `SystemPromptSection[]` (from `@earendil-works/pi-ai`) so providers can cache the stable prefix independently of volatile sections. Use `flattenSystemPrompt(systemPrompt)` from `@earendil-works/pi-ai` to get the equivalent single-string prompt.
 
 Assigning `agent.state.tools = [...]` or `agent.state.messages = [...]` copies the top-level array before storing it. Mutating the returned array mutates the current agent state.
 

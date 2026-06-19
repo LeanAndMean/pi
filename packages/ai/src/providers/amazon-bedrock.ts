@@ -32,6 +32,7 @@ import type {
 	StopReason,
 	StreamFunction,
 	StreamOptions,
+	SystemPromptSection,
 	TextContent,
 	ThinkingBudgets,
 	ThinkingContent,
@@ -43,6 +44,7 @@ import type {
 import { AssistantMessageEventStream } from "../utils/event-stream.js";
 import { parseStreamingJson } from "../utils/json-parse.js";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
+import { flattenSystemPrompt } from "../utils/system-prompt.js";
 import { adjustMaxTokensForThinking, buildBaseOptions, clampReasoning } from "./simple-options.js";
 import { transformMessages } from "./transform-messages.js";
 
@@ -596,13 +598,14 @@ function supportsThinkingSignature(model: Model<"bedrock-converse-stream">): boo
 }
 
 function buildSystemPrompt(
-	systemPrompt: string | undefined,
+	systemPrompt: string | SystemPromptSection[] | undefined,
 	model: Model<"bedrock-converse-stream">,
 	cacheRetention: CacheRetention,
 ): SystemContentBlock[] | undefined {
-	if (!systemPrompt) return undefined;
+	const flattened = flattenSystemPrompt(systemPrompt);
+	if (!flattened) return undefined;
 
-	const blocks: SystemContentBlock[] = [{ text: sanitizeSurrogates(systemPrompt) }];
+	const blocks: SystemContentBlock[] = [{ text: sanitizeSurrogates(flattened) }];
 
 	// Add cache point for supported Claude models when caching is enabled
 	if (cacheRetention !== "none" && supportsPromptCaching(model)) {

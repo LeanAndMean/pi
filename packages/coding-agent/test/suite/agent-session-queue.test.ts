@@ -1,6 +1,6 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@leanandmean/pi-coding-agent";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import { createHarness, getAssistantTexts, getMessageText, getUserTexts, type Harness } from "./harness.js";
@@ -151,6 +151,120 @@ describe("AgentSession queue characterization", () => {
 		await promptPromise;
 
 		expect(getUserTexts(harness)).toEqual(["start", "after current run"]);
+		expect(assistantSeenBeforeFollowUp).toContain("");
+		expect(getAssistantTexts(harness)).toContain("follow-up response");
+	});
+
+	it("queues dispatchUserInput with deliverAs steer for delivery before the next LLM call", async () => {
+		const waiting = await createWaitingHarness();
+		const { harness, waitForToolStart, promptPromise, releaseToolExecution } = waiting;
+		harnesses.push(harness);
+
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall("wait", {}), { stopReason: "toolUse" }),
+			(context) => {
+				const sawSteer = context.messages.some(
+					(message) => message.role === "user" && getMessageText(message) === "steer via dispatch",
+				);
+				return fauxAssistantMessage(sawSteer ? "saw steer" : "missing steer");
+			},
+		]);
+
+		await waitForToolStart;
+		await harness.session.dispatchUserInput("steer via dispatch", { deliverAs: "steer" });
+		releaseToolExecution();
+		await promptPromise;
+
+		expect(getUserTexts(harness)).toEqual(["start", "steer via dispatch"]);
+		expect(getAssistantTexts(harness)).toContain("saw steer");
+	});
+
+	it("rejects dispatchUserInput while streaming without deliverAs", async () => {
+		const waiting = await createWaitingHarness();
+		const { harness, waitForToolStart, promptPromise, releaseToolExecution } = waiting;
+		harnesses.push(harness);
+
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall("wait", {}), { stopReason: "toolUse" }),
+			fauxAssistantMessage("done"),
+		]);
+
+		await waitForToolStart;
+		await expect(harness.session.dispatchUserInput("no queue mode")).rejects.toThrow(/deliverAs/);
+
+		releaseToolExecution();
+		await promptPromise;
+
+		expect(getUserTexts(harness)).toEqual(["start"]);
+	});
+
+	it("resolves dispatchUserInput while streaming when an input handler consumes the text", async () => {
+		const consumed: string[] = [];
+		const waiting = await createWaitingHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.on("input", async (event) => {
+						// Only consume the dispatched text; let the initial "start"
+						// prompt through so the wait tool actually begins streaming.
+						if (event.text !== "consumed while streaming") return { action: "continue" };
+						consumed.push(event.text);
+						return { action: "handled" };
+					});
+				},
+			],
+		});
+		const { harness, waitForToolStart, promptPromise, releaseToolExecution } = waiting;
+		harnesses.push(harness);
+
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall("wait", {}), { stopReason: "toolUse" }),
+			fauxAssistantMessage("done"),
+		]);
+
+		await waitForToolStart;
+		// No deliverAs would normally reject while streaming, but the input handler
+		// consumes the text before it reaches the prompt queue, so the call resolves.
+		await expect(harness.session.dispatchUserInput("consumed while streaming")).resolves.toBeUndefined();
+
+		releaseToolExecution();
+		await promptPromise;
+
+		expect(consumed).toEqual(["consumed while streaming"]);
+		// The consumed text was never enqueued as a user message.
+		expect(getUserTexts(harness)).toEqual(["start"]);
+	});
+
+	it("queues dispatchUserInput with deliverAs followUp until the current run finishes", async () => {
+		const waiting = await createWaitingHarness();
+		const { harness, waitForToolStart, promptPromise, releaseToolExecution } = waiting;
+		harnesses.push(harness);
+		const assistantSeenBeforeFollowUp: string[] = [];
+
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall("wait", {}), { stopReason: "toolUse" }),
+			(context) => {
+				assistantSeenBeforeFollowUp.push(
+					...context.messages
+						.filter((message) => message.role === "assistant")
+						.map((message) =>
+							message.content
+								.filter((part): part is { type: "text"; text: string } => part.type === "text")
+								.map((part) => part.text)
+								.join("\n"),
+						),
+				);
+				return fauxAssistantMessage("follow-up response");
+			},
+		]);
+
+		await waitForToolStart;
+		await harness.session.dispatchUserInput("follow up via dispatch", { deliverAs: "followUp" });
+		releaseToolExecution();
+		await promptPromise;
+
+		expect(getUserTexts(harness)).toEqual(["start", "follow up via dispatch"]);
+		// The follow-up request saw the original run's assistant turn, proving
+		// it was delivered after that run finished rather than steered into it.
 		expect(assistantSeenBeforeFollowUp).toContain("");
 		expect(getAssistantTexts(harness)).toContain("follow-up response");
 	});

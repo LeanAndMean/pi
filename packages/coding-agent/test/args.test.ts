@@ -146,6 +146,34 @@ describe("parseArgs", () => {
 			expect(result.thinking).toBe("high");
 		});
 
+		test("parses --cache-retention short", () => {
+			const result = parseArgs(["--cache-retention", "short"]);
+			expect(result.cacheRetention).toBe("short");
+			expect(result.diagnostics).toEqual([]);
+		});
+
+		test("parses --cache-retention long", () => {
+			const result = parseArgs(["--cache-retention", "long"]);
+			expect(result.cacheRetention).toBe("long");
+			expect(result.diagnostics).toEqual([]);
+		});
+
+		test("warns on invalid --cache-retention value", () => {
+			const result = parseArgs(["--cache-retention", "forever"]);
+			expect(result.cacheRetention).toBeUndefined();
+			expect(result.diagnostics).toEqual([
+				{ type: "warning", message: 'Invalid cache retention "forever". Valid values: short, long' },
+			]);
+		});
+
+		test("warns on --cache-retention none (SDK/env-only value)", () => {
+			const result = parseArgs(["--cache-retention", "none"]);
+			expect(result.cacheRetention).toBeUndefined();
+			expect(result.diagnostics).toEqual([
+				{ type: "warning", message: 'Invalid cache retention "none". Valid values: short, long' },
+			]);
+		});
+
 		test("parses --models as comma-separated list", () => {
 			const result = parseArgs(["--models", "gpt-4o,claude-sonnet,gemini-pro"]);
 			expect(result.models).toEqual(["gpt-4o", "claude-sonnet", "gemini-pro"]);

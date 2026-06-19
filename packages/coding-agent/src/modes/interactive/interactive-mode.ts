@@ -60,6 +60,7 @@ import { type AgentSession, type AgentSessionEvent, parseSkillBlock } from "../.
 import { type AgentSessionRuntime, SessionImportFileNotFoundError } from "../../core/agent-session-runtime.js";
 import type {
 	AutocompleteProviderFactory,
+	DeliverAs,
 	EditorFactory,
 	ExtensionCommandContext,
 	ExtensionContext,
@@ -161,7 +162,7 @@ class ExpandableText extends Text implements Expandable {
 
 type CompactionQueuedMessage = {
 	text: string;
-	mode: "steer" | "followUp";
+	mode: DeliverAs;
 };
 
 const DEAD_TERMINAL_ERROR_CODES = new Set(["EIO", "EPIPE", "ENOTCONN"]);
@@ -1468,23 +1469,7 @@ export class InteractiveMode {
 			uiContext,
 			commandContextActions: {
 				waitForIdle: () => this.session.agent.waitForIdle(),
-				newSession: async (options) => {
-					if (this.loadingAnimation) {
-						this.loadingAnimation.stop();
-						this.loadingAnimation = undefined;
-					}
-					this.statusContainer.clear();
-					try {
-						const result = await this.runtimeHost.newSession(options);
-						if (!result.cancelled) {
-							this.renderCurrentSessionState();
-							this.ui.requestRender();
-						}
-						return result;
-					} catch (error: unknown) {
-						return this.handleFatalRuntimeError("Failed to create session", error);
-					}
-				},
+				newSession: (options) => this.handleExtensionNewSession(options),
 				fork: async (entryId, options) => {
 					try {
 						const result = await this.runtimeHost.fork(entryId, options);
@@ -1573,6 +1558,32 @@ export class InteractiveMode {
 		this.updateTerminalTitle();
 	}
 
+	/**
+	 * Extension-facing newSession wrapper shared by the command and shortcut
+	 * contexts: stops the loading animation, re-renders on success, and routes
+	 * mid-swap failures to fatal handling so the runtime is never left
+	 * half-switched.
+	 */
+	private async handleExtensionNewSession(
+		options?: Parameters<AgentSessionRuntime["newSession"]>[0],
+	): Promise<{ cancelled: boolean }> {
+		if (this.loadingAnimation) {
+			this.loadingAnimation.stop();
+			this.loadingAnimation = undefined;
+		}
+		this.statusContainer.clear();
+		try {
+			const result = await this.runtimeHost.newSession(options);
+			if (!result.cancelled) {
+				this.renderCurrentSessionState();
+				this.ui.requestRender();
+			}
+			return result;
+		} catch (error: unknown) {
+			return this.handleFatalRuntimeError("Failed to create session", error);
+		}
+	}
+
 	private async handleFatalRuntimeError(prefix: string, error: unknown): Promise<never> {
 		const message = error instanceof Error ? error.message : String(error);
 		this.showError(`${prefix}: ${message}`);
@@ -1633,6 +1644,8 @@ export class InteractiveMode {
 				})();
 			},
 			getSystemPrompt: () => this.session.systemPrompt,
+			dispatchUserInput: (input, options) => this.session.dispatchUserInput(input, options),
+			newSession: (options) => this.handleExtensionNewSession(options),
 		});
 
 		// Set up the extension shortcut handler on the default editor
@@ -3633,7 +3646,7 @@ export class InteractiveMode {
 		return allQueued.length;
 	}
 
-	private queueCompactionMessage(text: string, mode: "steer" | "followUp"): void {
+	private queueCompactionMessage(text: string, mode: DeliverAs): void {
 		this.compactionQueuedMessages.push({ text, mode });
 		this.editor.addToHistory?.(text);
 		this.editor.setText("");

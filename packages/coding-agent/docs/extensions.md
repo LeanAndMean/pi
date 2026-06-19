@@ -57,7 +57,7 @@ See [examples/extensions/](../examples/extensions/) for working implementations.
 Create `~/.pi/agent/extensions/my-extension.ts`:
 
 ```typescript
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@leanandmean/pi-coding-agent";
 import { Type } from "typebox";
 
 export default function (pi: ExtensionAPI) {
@@ -139,10 +139,12 @@ To share extensions via npm or git as pi packages, see [packages.md](packages.md
 
 | Package | Purpose |
 |---------|---------|
-| `@earendil-works/pi-coding-agent` | Extension types (`ExtensionAPI`, `ExtensionContext`, events) |
+| `@leanandmean/pi-coding-agent` | Extension types (`ExtensionAPI`, `ExtensionContext`, events) |
 | `typebox` | Schema definitions for tool parameters |
 | `@earendil-works/pi-ai` | AI utilities (`StringEnum` for Google-compatible enums) |
 | `@earendil-works/pi-tui` | TUI components for custom rendering |
+
+Imports of `@earendil-works/pi-coding-agent` and `@mariozechner/pi-coding-agent` are kept as back-compat aliases and resolve to the same module.
 
 npm dependencies work too. Add a `package.json` next to your extension (or in a parent directory), run `npm install`, and imports from `node_modules/` are resolved automatically.
 
@@ -155,7 +157,7 @@ Node.js built-ins (`node:fs`, `node:path`, etc.) are also available.
 An extension exports a default factory function that receives `ExtensionAPI`. The factory can be synchronous or asynchronous:
 
 ```typescript
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@leanandmean/pi-coding-agent";
 
 export default function (pi: ExtensionAPI) {
   // Subscribe to events
@@ -184,7 +186,7 @@ If the factory returns a `Promise`, pi awaits it before continuing startup. That
 Use an async factory for one-time startup work such as fetching remote configuration or dynamically discovering available models.
 
 ```typescript
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@leanandmean/pi-coding-agent";
 
 export default async function (pi: ExtensionAPI) {
   const response = await fetch("http://localhost:1234/v1/models");
@@ -473,6 +475,10 @@ pi.on("before_agent_start", async (event, ctx) => {
   // event.images - attached images (if any)
   // event.systemPrompt - current chained system prompt for this handler
   //   (includes changes from earlier before_agent_start handlers)
+  // event.systemPromptSections - read-only view of the base system prompt
+  //   sections for this turn, before extension contributions; the volatile
+  //   environment tail (current date/cwd) is the section with
+  //   cacheRetention: "none"
   // event.systemPromptOptions - structured options used to build the system prompt
   //   .customPrompt - any custom system prompt (from --system-prompt, SYSTEM.md, or custom templates)
   //   .selectedTools - tools currently active in the prompt
@@ -492,6 +498,8 @@ pi.on("before_agent_start", async (event, ctx) => {
     },
     // Replace the system prompt for this turn (chained across extensions)
     systemPrompt: event.systemPrompt + "\n\nExtra instructions for this turn...",
+    // OR contribute a stable section, inserted before the volatile tail
+    systemPromptSection: { id: "my-extension", text: "\n\nMy stable directives" },
   };
 });
 ```
@@ -499,6 +507,19 @@ pi.on("before_agent_start", async (event, ctx) => {
 The `systemPromptOptions` field gives extensions access to the same structured data Pi uses to build the system prompt. This lets you inspect what Pi has loaded — custom prompts, guidelines, tool snippets, context files, skills — without re-discovering resources or re-parsing flags. Use it when your extension needs to make deep, informed changes to the system prompt while respecting user-provided configuration.
 
 Inside `before_agent_start`, `event.systemPrompt` and `ctx.getSystemPrompt()` both reflect the chained system prompt as of the current handler. Later `before_agent_start` handlers can still modify it again.
+
+##### System prompt sections
+
+Pi assembles the system prompt as ordered sections (`SystemPromptSection { id, text, cacheRetention?: "none" }` from `@earendil-works/pi-ai`; ids are informational, and `"none"` is the only per-section retention — request-level retention applies otherwise) so providers can cache the stable prefix independently of the volatile tail. The last base section holds the current date and working directory and is marked `cacheRetention: "none"`; on Anthropic, everything before it is folded into a single cached system block and the volatile tail trails uncached.
+
+Returning `systemPromptSection` contributes a section for the current turn without replacing Pi's prompt assembly:
+
+- **Placement.** Contributed sections accumulate in extension load order and are inserted before the base volatile tail. A stable contribution thereby sits inside the cached stable prefix; a contribution marked `cacheRetention: "none"` is itself volatile, so it (and every section after it) lands in the uncached tail on providers that split on retention, such as Anthropic. They are spliced into a fresh copy of the base sections each turn, so they never accumulate across turns; return the section on every `before_agent_start` to keep it present. Unless an earlier handler has replaced the prompt with a `systemPrompt` string (see the merge rule below), contributions are folded into the chained prompt, so later `before_agent_start` handlers see them in `event.systemPrompt` and `ctx.getSystemPrompt()`; after a replacement they are not folded in and are dropped for the turn.
+- **Separator contract.** Section texts are joined with no separators when the prompt is flattened, so `text` must start with its own separator (typically `\n\n`). As a safety net, contributed text that doesn't start with a newline is prefixed with `\n\n` when spliced.
+- **Merge rule.** If any extension returns a legacy `systemPrompt` string, that final string replaces the whole prompt for the turn and all contributed sections are dropped — a full replacement is authoritative.
+- **Cache stability.** Keep contributed section text stable across turns. Text that changes every turn sits inside the cached prefix and would invalidate the provider prompt cache on each change; per-turn dynamic content belongs in an injected `message` instead.
+
+`event.systemPromptSections` is typed `readonly` but is a live reference, like other event fields: the same array is shared across all handlers in the turn and with Pi's base sections. Treat it as read-only — mutating it would leak into other extensions and persist across turns.
 
 #### agent_start / agent_end
 
@@ -688,7 +709,7 @@ Behavior guarantees:
 - Return values from `tool_call` only control blocking via `{ block: true, reason?: string }`
 
 ```typescript
-import { isToolCallEventType } from "@earendil-works/pi-coding-agent";
+import { isToolCallEventType } from "@leanandmean/pi-coding-agent";
 
 pi.on("tool_call", async (event, ctx) => {
   // event.toolName - "bash", "read", "write", "edit", etc.
@@ -724,7 +745,7 @@ export type MyToolInput = Static<typeof myToolSchema>;
 Use `isToolCallEventType` with explicit type parameters:
 
 ```typescript
-import { isToolCallEventType } from "@earendil-works/pi-coding-agent";
+import { isToolCallEventType } from "@leanandmean/pi-coding-agent";
 import type { MyToolInput } from "my-extension";
 
 pi.on("tool_call", (event) => {
@@ -748,7 +769,7 @@ In parallel tool mode, `tool_result` and `tool_execution_end` may interleave in 
 Use `ctx.signal` for nested async work inside the handler. This lets Esc cancel model calls, `fetch()`, and other abort-aware operations started by the extension.
 
 ```typescript
-import { isBashToolResult } from "@earendil-works/pi-coding-agent";
+import { isBashToolResult } from "@leanandmean/pi-coding-agent";
 
 pi.on("tool_result", async (event, ctx) => {
   // event.toolName, event.toolCallId, event.input
@@ -776,7 +797,7 @@ pi.on("tool_result", async (event, ctx) => {
 Fired when user executes `!` or `!!` commands. **Can intercept.**
 
 ```typescript
-import { createLocalBashOperations } from "@earendil-works/pi-coding-agent";
+import { createLocalBashOperations } from "@leanandmean/pi-coding-agent";
 
 pi.on("user_bash", (event, ctx) => {
   // event.command - the bash command
@@ -971,22 +992,22 @@ pi.on("before_agent_start", (event, ctx) => {
 });
 ```
 
-## ExtensionCommandContext
+### ctx.dispatchUserInput(input, options?)
 
-Command handlers receive `ExtensionCommandContext`, which extends `ExtensionContext` with session control methods. These are only available in commands because they can deadlock if called from event handlers.
-
-### ctx.waitForIdle()
-
-Wait for the agent to finish streaming:
+Dispatch input through the same pipeline as typed editor input: extension-registered slash commands, prompt templates, and skills all resolve as if the user had typed the text. The input event it produces carries `source: "extension"`. Built-in interactive commands (`/model`, `/login`, ...) are not part of this pipeline — they are intercepted by the interactive UI before reaching the session, so dispatching one sends the text to the LLM as a literal user message.
 
 ```typescript
-pi.registerCommand("my-cmd", {
-  handler: async (args, ctx) => {
-    await ctx.waitForIdle();
-    // Agent is now idle, safe to modify session
+pi.registerCommand("rerun-review", {
+  handler: async (_args, ctx) => {
+    await ctx.dispatchUserInput("/review src/index.ts");
   },
 });
 ```
+
+Options:
+- `deliverAs`: how to queue the input when the agent is streaming — `"steer"` (deliver before the next LLM call) or `"followUp"` (deliver after the current run finishes). Dispatching while streaming without `deliverAs` rejects, unless the input never reaches the prompt queue: extension-registered commands execute immediately even during streaming, and input consumed by an `input` handler returns without rejecting.
+
+Use `dispatchUserInput` when the text should go through command/template expansion; use `pi.sendUserMessage()` to submit content as a plain user message without that processing.
 
 ### ctx.newSession(options?)
 
@@ -1020,6 +1041,25 @@ Options:
 - `parentSession`: parent session file to record in the new session header
 - `setup`: mutate the new session's `SessionManager` before `withSession` runs
 - `withSession`: run post-switch work against a fresh replacement-session context. Do not use captured old `pi` / command `ctx`; see [Session replacement lifecycle and footguns](#session-replacement-lifecycle-and-footguns).
+
+`newSession()` is available in all handlers, not just commands, when running under one of the built-in modes (interactive, print, RPC); in SDK embeddings that never bind a command context, calling it rejects with an error. It does not wait for the agent to go idle: calling it from an event handler while the agent is streaming tears down the current session immediately.
+
+## ExtensionCommandContext
+
+Command handlers receive `ExtensionCommandContext`, which extends `ExtensionContext` with session control methods (`waitForIdle()`, `fork()`, `navigateTree()`, `switchSession()`, `reload()`). These are only available in commands because they can deadlock if called from event handlers — most directly `waitForIdle()`, which never resolves when awaited from a handler that runs as part of the active stream. `newSession()` and `dispatchUserInput()` are exceptions: they live on the base `ExtensionContext` because they never wait for idle (`newSession()` replaces the session immediately, and `dispatchUserInput()` rejects instead of blocking when dispatched mid-stream without `deliverAs`).
+
+### ctx.waitForIdle()
+
+Wait for the agent to finish streaming:
+
+```typescript
+pi.registerCommand("my-cmd", {
+  handler: async (args, ctx) => {
+    await ctx.waitForIdle();
+    // Agent is now idle, safe to modify session
+  },
+});
+```
 
 ### ctx.fork(entryId, options?)
 
@@ -1087,7 +1127,7 @@ Options:
 To discover available sessions, use the static `SessionManager.list()` or `SessionManager.listAll()` methods:
 
 ```typescript
-import { SessionManager } from "@earendil-works/pi-coding-agent";
+import { SessionManager } from "@leanandmean/pi-coding-agent";
 
 pi.registerCommand("switch", {
   description: "Switch to another session",
@@ -1181,7 +1221,7 @@ Tools run with `ExtensionContext`, so they cannot call `ctx.reload()` directly. 
 Example tool the LLM can call to trigger reload:
 
 ```typescript
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@leanandmean/pi-coding-agent";
 import { Type } from "typebox";
 
 export default function (pi: ExtensionAPI) {
@@ -1678,7 +1718,7 @@ Pass the real target file path to `withFileMutationQueue()`, not the raw user ar
 Queue the entire mutation window on that target path. That includes read-modify-write logic, not just the final write.
 
 ```typescript
-import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
+import { withFileMutationQueue } from "@leanandmean/pi-coding-agent";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
@@ -1858,7 +1898,7 @@ Built-in tool implementations:
 Built-in tools support pluggable operations for delegating to remote systems (SSH, containers, etc.):
 
 ```typescript
-import { createReadTool, createBashTool, type ReadOperations } from "@earendil-works/pi-coding-agent";
+import { createReadTool, createBashTool, type ReadOperations } from "@leanandmean/pi-coding-agent";
 
 // Create tool with custom operations
 const remoteRead = createReadTool(cwd, {
@@ -1889,7 +1929,7 @@ For `user_bash`, extensions can reuse pi's local shell backend via `createLocalB
 The bash tool also supports a spawn hook to adjust the command, cwd, or env before execution:
 
 ```typescript
-import { createBashTool } from "@earendil-works/pi-coding-agent";
+import { createBashTool } from "@leanandmean/pi-coding-agent";
 
 const bashTool = createBashTool(cwd, {
   spawnHook: ({ command, cwd, env }) => ({
@@ -1919,7 +1959,7 @@ import {
   formatSize,        // Human-readable size (e.g., "50KB", "1.5MB")
   DEFAULT_MAX_BYTES, // 50KB
   DEFAULT_MAX_LINES, // 2000
-} from "@earendil-works/pi-coding-agent";
+} from "@leanandmean/pi-coding-agent";
 
 async execute(toolCallId, params, signal, onUpdate, ctx) {
   const output = await runCommand();
@@ -2055,7 +2095,7 @@ If a slot intentionally has no visible content, return an empty `Component` such
 Use `keyHint()` to display keybinding hints that respect the active keybinding configuration:
 
 ```typescript
-import { keyHint } from "@earendil-works/pi-coding-agent";
+import { keyHint } from "@leanandmean/pi-coding-agent";
 
 renderResult(result, { expanded }, theme, context) {
   let text = theme.fg("success", "✓ Done");
@@ -2387,7 +2427,7 @@ See [tui.md](tui.md) for the full `OverlayOptions` API and [overlay-qa-tests.ts]
 Replace the main input editor with a custom implementation (vim mode, emacs mode, etc.):
 
 ```typescript
-import { CustomEditor, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { CustomEditor, type ExtensionAPI } from "@leanandmean/pi-coding-agent";
 import { matchesKey } from "@earendil-works/pi-tui";
 
 class VimEditor extends CustomEditor {
@@ -2487,7 +2527,7 @@ theme.strikethrough(text)
 For syntax highlighting in custom tool renderers:
 
 ```typescript
-import { highlightCode, getLanguageFromPath } from "@earendil-works/pi-coding-agent";
+import { highlightCode, getLanguageFromPath } from "@leanandmean/pi-coding-agent";
 
 // Highlight code with explicit language
 const highlighted = highlightCode("const x = 1;", "typescript", theme);

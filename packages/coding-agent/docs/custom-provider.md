@@ -30,7 +30,7 @@ See these complete provider examples:
 ## Quick Reference
 
 ```typescript
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@leanandmean/pi-coding-agent";
 
 export default function (pi: ExtensionAPI) {
   // Override baseUrl for existing provider
@@ -96,7 +96,7 @@ To add a completely new provider, specify `models` along with the required confi
 If the model list comes from a remote endpoint, use an async extension factory:
 
 ```typescript
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@leanandmean/pi-coding-agent";
 
 export default async function (pi: ExtensionAPI) {
   const response = await fetch("http://localhost:1234/v1/models");
@@ -351,6 +351,10 @@ For providers with non-standard APIs, implement `streamSimple`. Study the existi
 - [openai-responses.ts](https://github.com/earendil-works/pi-mono/blob/main/packages/ai/src/providers/openai-responses.ts) - OpenAI Responses API
 - [google.ts](https://github.com/earendil-works/pi-mono/blob/main/packages/ai/src/providers/google.ts) - Google Generative AI
 - [amazon-bedrock.ts](https://github.com/earendil-works/pi-mono/blob/main/packages/ai/src/providers/amazon-bedrock.ts) - AWS Bedrock
+
+### System Prompt Handling
+
+`Context.systemPrompt` is `string | SystemPromptSection[] | undefined`. Coding-agent sessions build ordered `SystemPromptSection[]` (each section is `{ id, text, cacheRetention?: "none" }`) so providers can cache the stable prefix separately from volatile content such as the current date. By default a custom provider never sees the array: unless it declares `handlesSystemPromptSections: true`, the dispatch layer flattens a sections array to the equivalent single string (byte-identical to the flattened sections) before calling `streamSimple`, so a handler written against the `string` contract keeps working unchanged. Set `handlesSystemPromptSections: true` in `pi.registerProvider()` to receive the array — for example to split on sections marked `cacheRetention: "none"` while preserving array order, as the Anthropic adapter does — and call `flattenSystemPrompt(context.systemPrompt)` (exported from `@earendil-works/pi-ai`) wherever you still need the single-string form.
 
 ### Stream Pattern
 

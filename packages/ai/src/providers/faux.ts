@@ -16,6 +16,7 @@ import type {
 	Usage,
 } from "../types.js";
 import { createAssistantMessageEventStream } from "../utils/event-stream.js";
+import { flattenSystemPrompt } from "../utils/system-prompt.js";
 
 const DEFAULT_API = "faux";
 const DEFAULT_PROVIDER = "faux";
@@ -177,8 +178,9 @@ function messageToText(message: Message): string {
 
 function serializeContext(context: Context): string {
 	const parts: string[] = [];
-	if (context.systemPrompt) {
-		parts.push(`system:${context.systemPrompt}`);
+	const systemPrompt = flattenSystemPrompt(context.systemPrompt);
+	if (systemPrompt) {
+		parts.push(`system:${systemPrompt}`);
 	}
 	for (const message of context.messages) {
 		parts.push(`${message.role}:${messageToText(message)}`);
@@ -467,7 +469,9 @@ export function registerFauxProvider(options: RegisterFauxProviderOptions = {}):
 	const streamSimple: StreamFunction<string, SimpleStreamOptions> = (streamModel, context, streamOptions) =>
 		stream(streamModel, context, streamOptions);
 
-	registerApiProvider({ api, stream, streamSimple }, sourceId);
+	// Receives sections verbatim so tests can assert on the array the session
+	// sent; usage estimation flattens internally.
+	registerApiProvider({ api, stream, streamSimple, handlesSystemPromptSections: true }, sourceId);
 
 	function getModel(): Model<string>;
 	function getModel(requestedModelId: string): Model<string> | undefined;

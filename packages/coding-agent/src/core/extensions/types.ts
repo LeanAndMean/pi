@@ -25,6 +25,7 @@ import type {
 	OAuthCredentials,
 	OAuthLoginCallbacks,
 	SimpleStreamOptions,
+	SystemPromptSection,
 	TextContent,
 	ToolResultMessage,
 } from "@earendil-works/pi-ai";
@@ -226,12 +227,12 @@ export interface ExtensionUIContext {
 	 * - `keybindings`: KeybindingsManager for app-level keybindings
 	 *
 	 * For full app keybinding support (escape, ctrl+d, model switching, etc.),
-	 * extend `CustomEditor` from `@earendil-works/pi-coding-agent` and call
+	 * extend `CustomEditor` from `@leanandmean/pi-coding-agent` and call
 	 * `super.handleInput(data)` for keys you don't handle.
 	 *
 	 * @example
 	 * ```ts
-	 * import { CustomEditor } from "@earendil-works/pi-coding-agent";
+	 * import { CustomEditor } from "@leanandmean/pi-coding-agent";
 	 *
 	 * class VimEditor extends CustomEditor {
 	 *   private mode: "normal" | "insert" = "insert";
@@ -292,6 +293,23 @@ export interface CompactOptions {
 	onError?: (error: Error) => void;
 }
 
+/** How to queue input that arrives while the agent is streaming. */
+export type DeliverAs = "steer" | "followUp";
+
+/** DeliverAs plus "nextTurn", for custom messages injected alongside the next user prompt. */
+export type SendMessageDeliverAs = DeliverAs | "nextTurn";
+
+export interface DispatchUserInputOptions {
+	/**
+	 * When the agent is streaming, how to queue the input. Dispatching while
+	 * streaming without `deliverAs` rejects, unless the input is handled before
+	 * it reaches the prompt queue (extension-registered commands execute
+	 * immediately; input consumed by an `input` handler returns without
+	 * rejecting).
+	 */
+	deliverAs?: DeliverAs;
+}
+
 /**
  * Context passed to extension event handlers.
  */
@@ -324,6 +342,25 @@ export interface ExtensionContext {
 	compact(options?: CompactOptions): void;
 	/** Get the current effective system prompt. */
 	getSystemPrompt(): string;
+	/**
+	 * Dispatch input through the same pipeline as typed editor input:
+	 * extension-registered slash commands, prompt templates, and skills all
+	 * resolve as if the user had typed the text. Built-in interactive commands
+	 * (`/model`, `/login`, ...) are not part of this pipeline — dispatching one
+	 * sends the text to the LLM as a literal user message.
+	 */
+	dispatchUserInput(input: string, options?: DispatchUserInputOptions): Promise<void>;
+
+	/**
+	 * Start a new session, optionally with initialization. Available under the
+	 * built-in modes (interactive, print, RPC); in SDK embeddings that never
+	 * bind a command context, calling it rejects with an error.
+	 */
+	newSession(options?: {
+		parentSession?: string;
+		setup?: (sessionManager: SessionManager) => Promise<void>;
+		withSession?: (ctx: ReplacedSessionContext) => Promise<void>;
+	}): Promise<{ cancelled: boolean }>;
 }
 
 /**
@@ -333,13 +370,6 @@ export interface ExtensionContext {
 export interface ExtensionCommandContext extends ExtensionContext {
 	/** Wait for the agent to finish streaming */
 	waitForIdle(): Promise<void>;
-
-	/** Start a new session, optionally with initialization. */
-	newSession(options?: {
-		parentSession?: string;
-		setup?: (sessionManager: SessionManager) => Promise<void>;
-		withSession?: (ctx: ReplacedSessionContext) => Promise<void>;
-	}): Promise<{ cancelled: boolean }>;
 
 	/** Fork from a specific entry, creating a new session file. */
 	fork(
@@ -371,13 +401,15 @@ export interface ExtensionCommandContext extends ExtensionContext {
 export interface ReplacedSessionContext extends ExtensionCommandContext {
 	sendMessage<T = unknown>(
 		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
-		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
+		options?: { triggerTurn?: boolean; deliverAs?: SendMessageDeliverAs },
 	): Promise<void>;
 
 	sendUserMessage(
 		content: string | (TextContent | ImageContent)[],
-		options?: { deliverAs?: "steer" | "followUp" },
+		options?: { deliverAs?: DeliverAs },
 	): Promise<void>;
+
+	dispatchUserInput(input: string, options?: DispatchUserInputOptions): Promise<void>;
 }
 
 // ============================================================================
@@ -629,6 +661,8 @@ export interface BeforeAgentStartEvent {
 	images?: ImageContent[];
 	/** The fully assembled system prompt string. */
 	systemPrompt: string;
+	/** Read-only view of the base system prompt sections for this turn, before extension contributions. The volatile environment tail is the section with `cacheRetention: "none"`. */
+	systemPromptSections: readonly SystemPromptSection[];
 	/** Structured options used to build the system prompt. Extensions can inspect this to understand what Pi loaded without re-discovering resources. */
 	systemPromptOptions: BuildSystemPromptOptions;
 }
@@ -1008,8 +1042,10 @@ export interface MessageEndEventResult {
 
 export interface BeforeAgentStartEventResult {
 	message?: Pick<CustomMessage, "customType" | "content" | "display" | "details">;
-	/** Replace the system prompt for this turn. If multiple extensions return this, they are chained. */
+	/** Replace the system prompt for this turn. If multiple extensions return this, they are chained. If any extension returns this, the final string wins for the whole prompt and all contributed `systemPromptSection`s are dropped for the turn. */
 	systemPrompt?: string;
+	/** Contribute a system prompt section for this turn. Sections accumulate in extension load order and are inserted before the volatile environment tail. Section texts are joined without separators, so `text` should start with its own separator (typically `\n\n`). */
+	systemPromptSection?: SystemPromptSection;
 }
 
 export interface SessionBeforeSwitchResult {
@@ -1177,17 +1213,14 @@ export interface ExtensionAPI {
 	/** Send a custom message to the session. */
 	sendMessage<T = unknown>(
 		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
-		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
+		options?: { triggerTurn?: boolean; deliverAs?: SendMessageDeliverAs },
 	): void;
 
 	/**
 	 * Send a user message to the agent. Always triggers a turn.
 	 * When the agent is streaming, use deliverAs to specify how to queue the message.
 	 */
-	sendUserMessage(
-		content: string | (TextContent | ImageContent)[],
-		options?: { deliverAs?: "steer" | "followUp" },
-	): void;
+	sendUserMessage(content: string | (TextContent | ImageContent)[], options?: { deliverAs?: DeliverAs }): void;
 
 	/** Append a custom entry to the session for state persistence (not sent to LLM). */
 	appendEntry<T = unknown>(customType: string, data?: T): void;
@@ -1326,6 +1359,13 @@ export interface ProviderConfig {
 	api?: Api;
 	/** Optional streamSimple handler for custom APIs. */
 	streamSimple?: (model: Model<Api>, context: Context, options?: SimpleStreamOptions) => AssistantMessageEventStream;
+	/**
+	 * Declares that `streamSimple` accepts `SystemPromptSection[]` in
+	 * `Context.systemPrompt`. When omitted, a sections array is flattened to
+	 * the equivalent single string before dispatch, so handlers written
+	 * against the legacy `string` contract keep working unchanged.
+	 */
+	handlesSystemPromptSections?: boolean;
 	/** Custom headers to include in requests. */
 	headers?: Record<string, string>;
 	/** If true, adds Authorization: Bearer header with the resolved API key. */
@@ -1406,13 +1446,15 @@ type HandlerFn = (...args: unknown[]) => Promise<unknown>;
 
 export type SendMessageHandler = <T = unknown>(
 	message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
-	options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
+	options?: { triggerTurn?: boolean; deliverAs?: SendMessageDeliverAs },
 ) => void;
 
 export type SendUserMessageHandler = (
 	content: string | (TextContent | ImageContent)[],
-	options?: { deliverAs?: "steer" | "followUp" },
+	options?: { deliverAs?: DeliverAs },
 ) => void;
+
+export type DispatchUserInputHandler = (input: string, options?: DispatchUserInputOptions) => Promise<void>;
 
 export type AppendEntryHandler = <T = unknown>(customType: string, data?: T) => void;
 
@@ -1500,6 +1542,7 @@ export interface ExtensionContextActions {
 	getContextUsage: () => ContextUsage | undefined;
 	compact: (options?: CompactOptions) => void;
 	getSystemPrompt: () => string;
+	dispatchUserInput: DispatchUserInputHandler;
 }
 
 /**

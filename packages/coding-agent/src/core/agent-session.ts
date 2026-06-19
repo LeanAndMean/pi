@@ -23,10 +23,18 @@ import type {
 	AgentTool,
 	ThinkingLevel,
 } from "@earendil-works/pi-agent-core";
-import type { AssistantMessage, ImageContent, Message, Model, TextContent } from "@earendil-works/pi-ai";
+import type {
+	AssistantMessage,
+	ImageContent,
+	Message,
+	Model,
+	SystemPromptSection,
+	TextContent,
+} from "@earendil-works/pi-ai";
 import {
 	clampThinkingLevel,
 	cleanupSessionResources,
+	flattenSystemPrompt,
 	getSupportedThinkingLevels,
 	isContextOverflow,
 	modelsAreEqual,
@@ -52,6 +60,8 @@ import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.
 import { createToolHtmlRenderer } from "./export-html/tool-renderer.js";
 import {
 	type ContextUsage,
+	type DeliverAs,
+	type DispatchUserInputOptions,
 	type ExtensionCommandContextActions,
 	type ExtensionErrorListener,
 	ExtensionRunner,
@@ -61,6 +71,7 @@ import {
 	type MessageStartEvent,
 	type MessageUpdateEvent,
 	type ReplacedSessionContext,
+	type SendMessageDeliverAs,
 	type SessionBeforeCompactResult,
 	type SessionBeforeTreeResult,
 	type SessionStartEvent,
@@ -75,7 +86,7 @@ import {
 	type TurnStartEvent,
 	wrapRegisteredTools,
 } from "./extensions/index.js";
-import { emitSessionShutdownEvent } from "./extensions/runner.js";
+import { emitSessionShutdownEvent, spliceContributedSections } from "./extensions/runner.js";
 import type { BashExecutionMessage, CustomMessage } from "./messages.js";
 import type { ModelRegistry } from "./model-registry.js";
 import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.js";
@@ -85,7 +96,7 @@ import { CURRENT_SESSION_VERSION, getLatestCompactionEntry, type SessionHeader }
 import type { SettingsManager } from "./settings-manager.js";
 import type { SlashCommandInfo } from "./slash-commands.js";
 import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.js";
-import { type BuildSystemPromptOptions, buildSystemPrompt } from "./system-prompt.js";
+import { type BuildSystemPromptOptions, buildSystemPromptSections } from "./system-prompt.js";
 import { type BashOperations, createLocalBashOperations } from "./tools/bash.js";
 import { createAllToolDefinitions } from "./tools/index.js";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.js";
@@ -189,8 +200,14 @@ export interface PromptOptions {
 	expandPromptTemplates?: boolean;
 	/** Image attachments */
 	images?: ImageContent[];
-	/** When streaming, how to queue the message: "steer" (interrupt) or "followUp" (wait). Required if streaming. */
-	streamingBehavior?: "steer" | "followUp";
+	/**
+	 * When streaming, how to queue the message: "steer" (interrupt) or
+	 * "followUp" (wait). Prompting while streaming without it rejects, unless
+	 * the text is handled before it reaches the prompt queue (extension
+	 * commands execute immediately; input consumed by an `input` handler
+	 * returns without rejecting).
+	 */
+	streamingBehavior?: DeliverAs;
 	/** Source of input for extension input event handlers. Defaults to "interactive". */
 	source?: InputSource;
 	/** Internal hook used by RPC mode to observe prompt preflight acceptance or rejection. */
@@ -306,8 +323,10 @@ export class AgentSession {
 	private _toolPromptSnippets: Map<string, string> = new Map();
 	private _toolPromptGuidelines: Map<string, string[]> = new Map();
 
-	// Base system prompt (without extension appends) - used to apply fresh appends each turn
-	private _baseSystemPrompt = "";
+	// Base system prompt as ordered sections (without extension appends) - used to
+	// apply fresh appends each turn. Sent to the agent as sections so providers
+	// can apply per-section cache control.
+	private _baseSystemPromptSections: SystemPromptSection[] = [];
 	private _baseSystemPromptOptions!: BuildSystemPromptOptions;
 
 	constructor(config: AgentSessionConfig) {
@@ -780,9 +799,9 @@ export class AgentSession {
 		return this.agent.state.isStreaming;
 	}
 
-	/** Current effective system prompt (includes any per-turn extension modifications) */
+	/** Current effective system prompt (includes any per-turn extension modifications), flattened to a string */
 	get systemPrompt(): string {
-		return this.agent.state.systemPrompt;
+		return flattenSystemPrompt(this.agent.state.systemPrompt);
 	}
 
 	/** Current retry attempt (0 if not retrying) */
@@ -833,8 +852,7 @@ export class AgentSession {
 		this.agent.state.tools = tools;
 
 		// Rebuild base system prompt with new tool set
-		this._baseSystemPrompt = this._rebuildSystemPrompt(validToolNames);
-		this.agent.state.systemPrompt = this._baseSystemPrompt;
+		this._rebuildSystemPrompt(validToolNames);
 	}
 
 	/** Whether compaction or branch summarization is currently running */
@@ -915,7 +933,8 @@ export class AgentSession {
 		return Array.from(unique);
 	}
 
-	private _rebuildSystemPrompt(toolNames: string[]): string {
+	/** Rebuild `_baseSystemPromptSections` from the current resources and tool set and apply it to agent state. */
+	private _rebuildSystemPrompt(toolNames: string[]): void {
 		const validToolNames = toolNames.filter((name) => this._toolRegistry.has(name));
 		const toolSnippets: Record<string, string> = {};
 		const promptGuidelines: string[] = [];
@@ -948,7 +967,8 @@ export class AgentSession {
 			toolSnippets,
 			promptGuidelines,
 		};
-		return buildSystemPrompt(this._baseSystemPromptOptions);
+		this._baseSystemPromptSections = buildSystemPromptSections(this._baseSystemPromptOptions);
+		this.agent.state.systemPrompt = this._baseSystemPromptSections.slice();
 	}
 
 	// =========================================================================
@@ -1011,7 +1031,8 @@ export class AgentSession {
 			if (this.isStreaming) {
 				if (!options?.streamingBehavior) {
 					throw new Error(
-						"Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message.",
+						"Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') — " +
+							"deliverAs when calling dispatchUserInput() or sendUserMessage() — to queue the message.",
 					);
 				}
 				if (options.streamingBehavior === "followUp") {
@@ -1073,7 +1094,7 @@ export class AgentSession {
 			const result = await this._extensionRunner.emitBeforeAgentStart(
 				expandedText,
 				currentImages,
-				this._baseSystemPrompt,
+				this._baseSystemPromptSections,
 				this._baseSystemPromptOptions,
 			);
 			// Add all custom messages from extensions
@@ -1089,12 +1110,19 @@ export class AgentSession {
 					});
 				}
 			}
-			// Apply extension-modified system prompt, or reset to base
-			if (result?.systemPrompt) {
+			// Apply extension-modified system prompt, or reset to base. A string
+			// replacement is authoritative (even an empty string): it wins for the
+			// whole prompt and any contributed sections are dropped for this turn.
+			if (result?.systemPrompt !== undefined) {
 				this.agent.state.systemPrompt = result.systemPrompt;
+			} else if (result?.systemPromptSections) {
+				this.agent.state.systemPrompt = spliceContributedSections(
+					this._baseSystemPromptSections,
+					result.systemPromptSections,
+				);
 			} else {
 				// Ensure we're using the base prompt (in case previous turn had modifications)
-				this.agent.state.systemPrompt = this._baseSystemPrompt;
+				this.agent.state.systemPrompt = this._baseSystemPromptSections.slice();
 			}
 		} catch (error) {
 			preflightResult?.(false);
@@ -1274,7 +1302,7 @@ export class AgentSession {
 	 */
 	async sendCustomMessage<T = unknown>(
 		message: Pick<CustomMessage<T>, "customType" | "content" | "display" | "details">,
-		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
+		options?: { triggerTurn?: boolean; deliverAs?: SendMessageDeliverAs },
 	): Promise<void> {
 		const appMessage = {
 			role: "custom" as const,
@@ -1316,7 +1344,7 @@ export class AgentSession {
 	 */
 	async sendUserMessage(
 		content: string | (TextContent | ImageContent)[],
-		options?: { deliverAs?: "steer" | "followUp" },
+		options?: { deliverAs?: DeliverAs },
 	): Promise<void> {
 		// Normalize content to text string + optional images
 		let text: string;
@@ -1343,6 +1371,24 @@ export class AgentSession {
 			expandPromptTemplates: false,
 			streamingBehavior: options?.deliverAs,
 			images,
+			source: "extension",
+		});
+	}
+
+	/**
+	 * Dispatch input through the same pipeline as typed editor input:
+	 * extension-registered slash commands, prompt templates, and skills all
+	 * resolve as if the user had typed the text (source: "extension").
+	 *
+	 * @param options.deliverAs Delivery mode when streaming: "steer" or "followUp"
+	 * @throws Error if streaming and no deliverAs specified, unless the input is
+	 *   handled before reaching the prompt queue (extension commands execute
+	 *   immediately; input consumed by an `input` handler returns normally)
+	 */
+	async dispatchUserInput(input: string, options?: DispatchUserInputOptions): Promise<void> {
+		await this.prompt(input, {
+			expandPromptTemplates: true,
+			streamingBehavior: options?.deliverAs,
 			source: "extension",
 		});
 	}
@@ -2072,8 +2118,7 @@ export class AgentSession {
 		};
 
 		this._resourceLoader.extendResources(extensionPaths);
-		this._baseSystemPrompt = this._rebuildSystemPrompt(this.getActiveToolNames());
-		this.agent.state.systemPrompt = this._baseSystemPrompt;
+		this._rebuildSystemPrompt(this.getActiveToolNames());
 	}
 
 	private buildExtensionResourcePaths(entries: Array<{ path: string; extensionPath: string }>): Array<{
@@ -2221,6 +2266,7 @@ export class AgentSession {
 					})();
 				},
 				getSystemPrompt: () => this.systemPrompt,
+				dispatchUserInput: (input, options) => this.dispatchUserInput(input, options),
 			},
 			{
 				registerProvider: (name, config) => {
@@ -3091,6 +3137,7 @@ export class AgentSession {
 		) as ReplacedSessionContext;
 		context.sendMessage = (message, options) => this.sendCustomMessage(message, options);
 		context.sendUserMessage = (content, options) => this.sendUserMessage(content, options);
+		context.dispatchUserInput = (input, options) => this.dispatchUserInput(input, options);
 		return context;
 	}
 

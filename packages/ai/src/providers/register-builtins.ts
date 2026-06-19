@@ -339,59 +339,70 @@ export const streamSimpleOpenAIResponses = createLazySimpleStream(loadOpenAIResp
 const streamBedrockLazy = createLazyStream(loadBedrockProviderModule);
 const streamSimpleBedrockLazy = createLazySimpleStream(loadBedrockProviderModule);
 
+// All built-ins accept SystemPromptSection[]: Anthropic splits sections into
+// cached/uncached system blocks, every other provider flattens internally.
 export function registerBuiltInApiProviders(): void {
 	registerApiProvider({
 		api: "anthropic-messages",
 		stream: streamAnthropic,
 		streamSimple: streamSimpleAnthropic,
+		handlesSystemPromptSections: true,
 	});
 
 	registerApiProvider({
 		api: "openai-completions",
 		stream: streamOpenAICompletions,
 		streamSimple: streamSimpleOpenAICompletions,
+		handlesSystemPromptSections: true,
 	});
 
 	registerApiProvider({
 		api: "mistral-conversations",
 		stream: streamMistral,
 		streamSimple: streamSimpleMistral,
+		handlesSystemPromptSections: true,
 	});
 
 	registerApiProvider({
 		api: "openai-responses",
 		stream: streamOpenAIResponses,
 		streamSimple: streamSimpleOpenAIResponses,
+		handlesSystemPromptSections: true,
 	});
 
 	registerApiProvider({
 		api: "azure-openai-responses",
 		stream: streamAzureOpenAIResponses,
 		streamSimple: streamSimpleAzureOpenAIResponses,
+		handlesSystemPromptSections: true,
 	});
 
 	registerApiProvider({
 		api: "openai-codex-responses",
 		stream: streamOpenAICodexResponses,
 		streamSimple: streamSimpleOpenAICodexResponses,
+		handlesSystemPromptSections: true,
 	});
 
 	registerApiProvider({
 		api: "google-generative-ai",
 		stream: streamGoogle,
 		streamSimple: streamSimpleGoogle,
+		handlesSystemPromptSections: true,
 	});
 
 	registerApiProvider({
 		api: "google-vertex",
 		stream: streamGoogleVertex,
 		streamSimple: streamSimpleGoogleVertex,
+		handlesSystemPromptSections: true,
 	});
 
 	registerApiProvider({
 		api: "bedrock-converse-stream",
 		stream: streamBedrockLazy,
 		streamSimple: streamSimpleBedrockLazy,
+		handlesSystemPromptSections: true,
 	});
 }
 

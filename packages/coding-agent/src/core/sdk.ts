@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { Agent, type AgentMessage, type ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { clampThinkingLevel, type Message, type Model, streamSimple } from "@earendil-works/pi-ai";
+import { type CacheRetention, clampThinkingLevel, type Message, type Model, streamSimple } from "@earendil-works/pi-ai";
 import { getAgentDir } from "../config.js";
 import { AgentSession } from "./agent-session.js";
 import { formatNoModelsAvailableMessage } from "./auth-guidance.js";
@@ -47,6 +47,13 @@ export interface CreateAgentSessionOptions {
 	thinkingLevel?: ThinkingLevel;
 	/** Models available for cycling (Ctrl+P in interactive mode) */
 	scopedModels?: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>;
+	/**
+	 * Prompt-cache retention for provider requests.
+	 *
+	 * Precedence: this option, then the PI_CACHE_RETENTION environment variable,
+	 * then "long". Pass "short" for short-lived sessions such as subagents.
+	 */
+	cacheRetention?: CacheRetention;
 
 	/**
 	 * Optional default tool suppression mode when no explicit allowlist is provided.
@@ -125,6 +132,38 @@ function getDefaultAgentDir(): string {
 	return getAgentDir();
 }
 
+function isCacheRetention(value: string): value is CacheRetention {
+	return value === "none" || value === "short" || value === "long";
+}
+
+// resolveCacheRetention runs on every createAgentSession call (including /new),
+// so warn about a bad env var only once per process to keep it out of the TUI.
+//
+// Defaults to "long" (1h tier). NOTE: the Anthropic adapter has a same-named
+// resolveCacheRetention (packages/ai/src/providers/anthropic.ts) that defaults
+// to "short" for backward compatibility. The divergence is intentional: this
+// SDK resolver runs first and passes a concrete value down, so the adapter's
+// "short" default is effectively shadowed in the coding-agent path. Keep both
+// in mind when changing either default.
+let warnedInvalidCacheRetention = false;
+
+function resolveCacheRetention(option: CacheRetention | undefined): CacheRetention {
+	if (option) {
+		return option;
+	}
+	const env = process.env.PI_CACHE_RETENTION;
+	if (env) {
+		if (isCacheRetention(env)) {
+			return env;
+		}
+		if (!warnedInvalidCacheRetention) {
+			warnedInvalidCacheRetention = true;
+			console.warn(`Invalid PI_CACHE_RETENTION "${env}". Valid values: none, short, long. Using "long".`);
+		}
+	}
+	return "long";
+}
+
 function getAttributionHeaders(
 	model: Model<any>,
 	settingsManager: SettingsManager,
@@ -193,6 +232,7 @@ function getAttributionHeaders(
 export async function createAgentSession(options: CreateAgentSessionOptions = {}): Promise<CreateAgentSessionResult> {
 	const cwd = options.cwd ?? options.sessionManager?.getCwd() ?? process.cwd();
 	const agentDir = options.agentDir ?? getDefaultAgentDir();
+	const cacheRetention = resolveCacheRetention(options.cacheRetention);
 	let resourceLoader = options.resourceLoader;
 
 	// Use provided or create AuthStorage and ModelRegistry
@@ -335,6 +375,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			return streamSimple(model, context, {
 				...options,
 				apiKey: auth.apiKey,
+				cacheRetention: options?.cacheRetention ?? cacheRetention,
 				timeoutMs: options?.timeoutMs ?? providerRetrySettings.timeoutMs,
 				maxRetries: options?.maxRetries ?? providerRetrySettings.maxRetries,
 				maxRetryDelayMs: options?.maxRetryDelayMs ?? providerRetrySettings.maxRetryDelayMs,

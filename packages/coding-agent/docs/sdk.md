@@ -16,7 +16,7 @@ See [examples/sdk/](../examples/sdk/) for working examples from minimal to full 
 ## Quick Start
 
 ```typescript
-import { AuthStorage, createAgentSession, ModelRegistry, SessionManager } from "@earendil-works/pi-coding-agent";
+import { AuthStorage, createAgentSession, ModelRegistry, SessionManager } from "@leanandmean/pi-coding-agent";
 
 // Set up credential storage and model registry
 const authStorage = AuthStorage.create();
@@ -40,7 +40,7 @@ await session.prompt("What files are in the current directory?");
 ## Installation
 
 ```bash
-npm install @earendil-works/pi-coding-agent
+npm install @leanandmean/pi-coding-agent
 ```
 
 The SDK is included in the main package. No separate installation needed.
@@ -54,7 +54,7 @@ The main factory function for a single `AgentSession`.
 `createAgentSession()` uses a `ResourceLoader` to supply extensions, skills, prompt templates, themes, and context files. If you do not provide one, it uses `DefaultResourceLoader` with standard discovery.
 
 ```typescript
-import { createAgentSession } from "@earendil-works/pi-coding-agent";
+import { createAgentSession } from "@leanandmean/pi-coding-agent";
 
 // Minimal: defaults with DefaultResourceLoader
 const { session } = await createAgentSession();
@@ -132,7 +132,7 @@ import {
   createAgentSessionServices,
   getAgentDir,
   SessionManager,
-} from "@earendil-works/pi-coding-agent";
+} from "@leanandmean/pi-coding-agent";
 
 const createRuntime: CreateAgentSessionRuntimeFactory = async ({ cwd, sessionManager, sessionStartEvent }) => {
   const services = await createAgentSessionServices({ cwd });
@@ -237,6 +237,17 @@ await session.followUp("After you're done, also do this");
 
 Both `steer()` and `followUp()` expand file-based prompt templates but error on extension commands (extension commands cannot be queued).
 
+`dispatchUserInput()` routes text through the same pipeline as typed editor input — extension-registered slash commands, prompt templates, and skills all resolve as if the user had typed it (the resulting input event carries `source: "extension"`):
+
+```typescript
+await session.dispatchUserInput("/review src/index.ts");
+
+// While streaming, queueing must be explicit, same as prompt():
+await session.dispatchUserInput("also check the tests", { deliverAs: "followUp" });
+```
+
+Dispatching while streaming without `deliverAs` throws, unless the input is handled before it reaches the prompt queue: extension-registered commands execute immediately even during streaming, and input consumed by an extension `input` handler returns without throwing. Built-in interactive commands (`/model`, `/login`, ...) are not part of this pipeline — dispatching one sends the text to the LLM as a literal user message.
+
 ### Agent and AgentState
 
 The `Agent` class (from `@earendil-works/pi-agent-core`) handles the core LLM interaction. Access it via `session.agent`.
@@ -248,7 +259,8 @@ const state = session.agent.state;
 // state.messages: AgentMessage[] - conversation history
 // state.model: Model - current model
 // state.thinkingLevel: ThinkingLevel - current thinking level
-// state.systemPrompt: string - system prompt
+// state.systemPrompt: string | SystemPromptSection[] - system prompt
+//   (pi builds ordered sections; session.systemPrompt flattens to a string)
 // state.tools: AgentTool[] - available tools
 // state.streamingMessage?: AgentMessage - current partial assistant message
 // state.errorMessage?: string - latest assistant error
@@ -369,7 +381,7 @@ When you pass a custom `ResourceLoader`, `cwd` and `agentDir` no longer control 
 
 ```typescript
 import { getModel } from "@earendil-works/pi-ai";
-import { AuthStorage, ModelRegistry } from "@earendil-works/pi-coding-agent";
+import { AuthStorage, ModelRegistry } from "@leanandmean/pi-coding-agent";
 
 const authStorage = AuthStorage.create();
 const modelRegistry = ModelRegistry.create(authStorage);
@@ -388,6 +400,7 @@ const available = await modelRegistry.getAvailable();
 const { session } = await createAgentSession({
   model: opus,
   thinkingLevel: "medium", // off, minimal, low, medium, high, xhigh
+  cacheRetention: "long", // none, short, long (default: long)
   
   // Models for cycling (Ctrl+P in interactive mode)
   scopedModels: [
@@ -405,6 +418,12 @@ If no model is provided:
 2. Uses default from settings
 3. Falls back to first available model
 
+`cacheRetention` controls prompt-cache retention on providers that support it (Anthropic: `long` -> 1h cache TTL where the model supports it, `short` -> the default 5m TTL, `none` -> no caching). Precedence: the `cacheRetention` option (or the `--cache-retention` CLI flag), then the `PI_CACHE_RETENTION` environment variable, then the built-in default `long`. Short-lived sessions such as subagents should pass `short` since a 1h cache write costs more than a 5m one and rarely pays off for a single run.
+
+Pi builds the system prompt as ordered sections and isolates the volatile environment tail (current date, working directory) into a final uncached section. On Anthropic, the stable sections are folded into a single system block carrying the cache breakpoint, so the cached prefix survives across turns even though the tail varies between sessions. Extensions can contribute stable sections via `before_agent_start` — see [extensions.md](extensions.md#system-prompt-sections).
+
+> Before sectioned system prompts landed, the effective default was `short` (the env var could only upgrade it to `long`). Sessions created through the SDK or CLI now default to `long`; set `PI_CACHE_RETENTION=short` or pass `cacheRetention: "short"` to restore the old behavior.
+
 > See [examples/sdk/02-custom-model.ts](../examples/sdk/02-custom-model.ts)
 
 ### API Keys and OAuth
@@ -416,7 +435,7 @@ API key resolution priority (handled by AuthStorage):
 4. Fallback resolver (for custom provider keys from `models.json`)
 
 ```typescript
-import { AuthStorage, ModelRegistry } from "@earendil-works/pi-coding-agent";
+import { AuthStorage, ModelRegistry } from "@leanandmean/pi-coding-agent";
 
 // Default: uses ~/.pi/agent/auth.json and ~/.pi/agent/models.json
 const authStorage = AuthStorage.create();
@@ -452,7 +471,7 @@ const simpleRegistry = ModelRegistry.inMemory(authStorage);
 Use a `ResourceLoader` to override the system prompt:
 
 ```typescript
-import { createAgentSession, DefaultResourceLoader } from "@earendil-works/pi-coding-agent";
+import { createAgentSession, DefaultResourceLoader } from "@leanandmean/pi-coding-agent";
 
 const loader = new DefaultResourceLoader({
   systemPromptOverride: () => "You are a helpful assistant.",
@@ -472,7 +491,7 @@ import {
   readOnlyTools, // read, grep, find, ls
   readTool, bashTool, editTool, writeTool,
   grepTool, findTool, lsTool,
-} from "@earendil-works/pi-coding-agent";
+} from "@leanandmean/pi-coding-agent";
 
 // Use built-in tool set
 const { session } = await createAgentSession({
@@ -500,7 +519,7 @@ import {
   createGrepTool,
   createFindTool,
   createLsTool,
-} from "@earendil-works/pi-coding-agent";
+} from "@leanandmean/pi-coding-agent";
 
 const cwd = "/path/to/project";
 
@@ -530,7 +549,7 @@ const { session } = await createAgentSession({
 
 ```typescript
 import { Type } from "typebox";
-import { createAgentSession, defineTool } from "@earendil-works/pi-coding-agent";
+import { createAgentSession, defineTool } from "@leanandmean/pi-coding-agent";
 
 // Inline custom tool
 const myTool = defineTool({
@@ -563,7 +582,7 @@ Custom tools passed via `customTools` are combined with extension-registered too
 Extensions are loaded by the `ResourceLoader`. `DefaultResourceLoader` discovers extensions from `~/.pi/agent/extensions/`, `.pi/extensions/`, and settings.json extension sources.
 
 ```typescript
-import { createAgentSession, DefaultResourceLoader } from "@earendil-works/pi-coding-agent";
+import { createAgentSession, DefaultResourceLoader } from "@leanandmean/pi-coding-agent";
 
 const loader = new DefaultResourceLoader({
   additionalExtensionPaths: ["/path/to/my-extension.ts"],
@@ -585,7 +604,7 @@ Extensions can register tools, subscribe to events, add commands, and more. See 
 **Event Bus:** Extensions can communicate via `pi.events`. Pass a shared `eventBus` to `DefaultResourceLoader` if you need to emit or listen from outside:
 
 ```typescript
-import { createEventBus, DefaultResourceLoader } from "@earendil-works/pi-coding-agent";
+import { createEventBus, DefaultResourceLoader } from "@leanandmean/pi-coding-agent";
 
 const eventBus = createEventBus();
 const loader = new DefaultResourceLoader({
@@ -605,7 +624,7 @@ import {
   createAgentSession,
   DefaultResourceLoader,
   type Skill,
-} from "@earendil-works/pi-coding-agent";
+} from "@leanandmean/pi-coding-agent";
 
 const customSkill: Skill = {
   name: "my-skill",
@@ -631,7 +650,7 @@ const { session } = await createAgentSession({ resourceLoader: loader });
 ### Context Files
 
 ```typescript
-import { createAgentSession, DefaultResourceLoader } from "@earendil-works/pi-coding-agent";
+import { createAgentSession, DefaultResourceLoader } from "@leanandmean/pi-coding-agent";
 
 const loader = new DefaultResourceLoader({
   agentsFilesOverride: (current) => ({
@@ -655,7 +674,7 @@ import {
   createAgentSession,
   DefaultResourceLoader,
   type PromptTemplate,
-} from "@earendil-works/pi-coding-agent";
+} from "@leanandmean/pi-coding-agent";
 
 const customCommand: PromptTemplate = {
   name: "deploy",
@@ -690,7 +709,7 @@ import {
   createAgentSessionServices,
   getAgentDir,
   SessionManager,
-} from "@earendil-works/pi-coding-agent";
+} from "@leanandmean/pi-coding-agent";
 
 // In-memory (no persistence)
 const { session } = await createAgentSession({
@@ -784,7 +803,7 @@ sm.createBranchedSession(leafId);       // Extract path to new file
 ### Settings Management
 
 ```typescript
-import { createAgentSession, SettingsManager, SessionManager } from "@earendil-works/pi-coding-agent";
+import { createAgentSession, SettingsManager, SessionManager } from "@leanandmean/pi-coding-agent";
 
 // Default: loads from files (global + project merged)
 const { session } = await createAgentSession({
@@ -840,7 +859,7 @@ Use `DefaultResourceLoader` to discover extensions, skills, prompts, themes, and
 import {
   DefaultResourceLoader,
   getAgentDir,
-} from "@earendil-works/pi-coding-agent";
+} from "@leanandmean/pi-coding-agent";
 
 const loader = new DefaultResourceLoader({
   cwd,
@@ -893,7 +912,7 @@ import {
   readTool,
   SessionManager,
   SettingsManager,
-} from "@earendil-works/pi-coding-agent";
+} from "@leanandmean/pi-coding-agent";
 
 // Set up auth storage (custom location)
 const authStorage = AuthStorage.create("/custom/agent/auth.json");
@@ -978,7 +997,7 @@ import {
   getAgentDir,
   InteractiveMode,
   SessionManager,
-} from "@earendil-works/pi-coding-agent";
+} from "@leanandmean/pi-coding-agent";
 
 const createRuntime: CreateAgentSessionRuntimeFactory = async ({ cwd, sessionManager, sessionStartEvent }) => {
   const services = await createAgentSessionServices({ cwd });
@@ -1018,7 +1037,7 @@ import {
   getAgentDir,
   runPrintMode,
   SessionManager,
-} from "@earendil-works/pi-coding-agent";
+} from "@leanandmean/pi-coding-agent";
 
 const createRuntime: CreateAgentSessionRuntimeFactory = async ({ cwd, sessionManager, sessionStartEvent }) => {
   const services = await createAgentSessionServices({ cwd });
@@ -1055,7 +1074,7 @@ import {
   getAgentDir,
   runRpcMode,
   SessionManager,
-} from "@earendil-works/pi-coding-agent";
+} from "@leanandmean/pi-coding-agent";
 
 const createRuntime: CreateAgentSessionRuntimeFactory = async ({ cwd, sessionManager, sessionStartEvent }) => {
   const services = await createAgentSessionServices({ cwd });

@@ -31,6 +31,7 @@ import type { AssistantMessageEventStream } from "../utils/event-stream.js";
 import { shortHash } from "../utils/hash.js";
 import { parseStreamingJson } from "../utils/json-parse.js";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
+import { flattenSystemPrompt } from "../utils/system-prompt.js";
 import { transformMessages } from "./transform-messages.js";
 
 // =============================================================================
@@ -123,11 +124,12 @@ export function convertResponsesMessages<TApi extends Api>(
 	const transformedMessages = transformMessages(context.messages, model, normalizeToolCallId);
 
 	const includeSystemPrompt = options?.includeSystemPrompt ?? true;
-	if (includeSystemPrompt && context.systemPrompt) {
+	const systemPrompt = flattenSystemPrompt(context.systemPrompt);
+	if (includeSystemPrompt && systemPrompt) {
 		const role = model.reasoning ? "developer" : "system";
 		messages.push({
 			role,
-			content: sanitizeSurrogates(context.systemPrompt),
+			content: sanitizeSurrogates(systemPrompt),
 		});
 	}
 

@@ -30,6 +30,7 @@ import {
 	type Context,
 	calculateCost,
 	createAssistantMessageEventStream,
+	flattenSystemPrompt,
 	type ImageContent,
 	type Message,
 	type Model,
@@ -43,7 +44,7 @@ import {
 	type ToolCall,
 	type ToolResultMessage,
 } from "@earendil-works/pi-ai";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@leanandmean/pi-coding-agent";
 
 // =============================================================================
 // OAuth Implementation (copied from packages/ai/src/utils/oauth/anthropic.ts)
@@ -398,6 +399,7 @@ function streamCustomAnthropic(
 			};
 
 			// System prompt with Claude Code identity for OAuth
+			const systemPrompt = flattenSystemPrompt(context.systemPrompt);
 			if (isOAuth) {
 				params.system = [
 					{
@@ -406,18 +408,18 @@ function streamCustomAnthropic(
 						cache_control: { type: "ephemeral" },
 					},
 				];
-				if (context.systemPrompt) {
+				if (systemPrompt) {
 					params.system.push({
 						type: "text",
-						text: sanitizeSurrogates(context.systemPrompt),
+						text: sanitizeSurrogates(systemPrompt),
 						cache_control: { type: "ephemeral" },
 					});
 				}
-			} else if (context.systemPrompt) {
+			} else if (systemPrompt) {
 				params.system = [
 					{
 						type: "text",
-						text: sanitizeSurrogates(context.systemPrompt),
+						text: sanitizeSurrogates(systemPrompt),
 						cache_control: { type: "ephemeral" },
 					},
 				];

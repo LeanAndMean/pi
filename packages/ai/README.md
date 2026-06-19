@@ -104,6 +104,24 @@ const context: Context = {
   tools
 };
 
+// systemPrompt also accepts ordered SystemPromptSection[] so providers can
+// cache the stable prefix separately from volatile content. Sections marked
+// cacheRetention: "none" are excluded from the cached prefix on the Anthropic
+// adapter only; every other provider (including Bedrock, which still sets its
+// own cachePoint) flattens sections in array order. Use
+// flattenSystemPrompt(context.systemPrompt) to get the equivalent
+// single-string prompt. Providers registered via registerApiProvider only
+// receive the array if they declare handlesSystemPromptSections: true;
+// otherwise the registry flattens it before dispatch, preserving the legacy
+// string contract.
+const sectioned: Context = {
+  systemPrompt: [
+    { id: 'core', text: 'You are a helpful assistant.' },
+    { id: 'env', text: '\n\nCurrent date: 2026-06-11', cacheRetention: 'none' },
+  ],
+  messages: [{ role: 'user', content: 'What time is it?' }],
+};
+
 // Option 1: Streaming with all event types
 const s = stream(model, context);
 

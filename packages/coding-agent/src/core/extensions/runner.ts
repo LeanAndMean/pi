@@ -3,7 +3,8 @@
  */
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { ImageContent, Model } from "@earendil-works/pi-ai";
+import type { ImageContent, Model, SystemPromptSection } from "@earendil-works/pi-ai";
+import { flattenSystemPrompt } from "@earendil-works/pi-ai";
 import type { KeyId } from "@earendil-works/pi-tui";
 import { type Theme, theme } from "../../modes/interactive/theme/theme.js";
 import type { ResourceDiagnostic } from "../diagnostics.js";
@@ -19,6 +20,7 @@ import type {
 	ContextEvent,
 	ContextEventResult,
 	ContextUsage,
+	DispatchUserInputHandler,
 	Extension,
 	ExtensionActions,
 	ExtensionCommandContext,
@@ -106,6 +108,8 @@ const buildBuiltinKeybindings = (resolvedKeybindings: KeybindingsConfig): BuiltI
 interface BeforeAgentStartCombinedResult {
 	messages?: NonNullable<BeforeAgentStartEventResult["message"]>[];
 	systemPrompt?: string;
+	/** Sections contributed via `systemPromptSection`, in extension load order. */
+	systemPromptSections?: SystemPromptSection[];
 }
 
 /**
@@ -188,6 +192,29 @@ export async function emitSessionShutdownEvent(
 	return false;
 }
 
+/**
+ * Splices extension-contributed sections into a fresh copy of the base
+ * sections, before the volatile environment tail (the first
+ * `cacheRetention: "none"` section) so they sit inside the cached prefix.
+ *
+ * Section texts are joined with no separator when flattened, so contributed
+ * text that doesn't start with a newline is prefixed with `\n\n` to keep it
+ * from gluing onto the previous section's last line.
+ */
+export function spliceContributedSections(
+	base: SystemPromptSection[],
+	contributed: SystemPromptSection[],
+): SystemPromptSection[] {
+	const sections = base.slice();
+	const volatileIndex = sections.findIndex((s) => s.cacheRetention === "none");
+	const insertAt = volatileIndex === -1 ? sections.length : volatileIndex;
+	const normalized = contributed.map((section) =>
+		section.text && !section.text.startsWith("\n") ? { ...section, text: `\n\n${section.text}` } : section,
+	);
+	sections.splice(insertAt, 0, ...normalized);
+	return sections;
+}
+
 const noOpUIContext: ExtensionUIContext = {
 	select: async () => undefined,
 	confirm: async () => false,
@@ -238,7 +265,20 @@ export class ExtensionRunner {
 	private getContextUsageFn: () => ContextUsage | undefined = () => undefined;
 	private compactFn: (options?: CompactOptions) => void = () => {};
 	private getSystemPromptFn: () => string = () => "";
-	private newSessionHandler: NewSessionHandler = async () => ({ cancelled: false });
+	// The two defaults immediately below throw rather than fabricate success:
+	// silently dropping input (dispatchUserInput) or reporting a session swap
+	// that never happened (newSession) hides real bugs in headless/SDK
+	// embeddings that never bind these handlers.
+	private dispatchUserInputFn: DispatchUserInputHandler = async () => {
+		throw new Error("dispatchUserInput is not available in this session mode (no input pipeline bound)");
+	};
+	private newSessionHandler: NewSessionHandler = async () => {
+		throw new Error("newSession is not available in this session mode (no command context bound)");
+	};
+	// fork/navigateTree/switchSession deliberately differ: when unbound they
+	// report a no-op cancellation ({ cancelled: false }) instead of throwing,
+	// since session-tree navigation that simply doesn't happen is a benign
+	// no-op for an embedding that never wired up tree navigation.
 	private forkHandler: ForkHandler = async () => ({ cancelled: false });
 	private navigateTreeHandler: NavigateTreeHandler = async () => ({ cancelled: false });
 	private switchSessionHandler: SwitchSessionHandler = async () => ({ cancelled: false });
@@ -297,6 +337,7 @@ export class ExtensionRunner {
 		this.getContextUsageFn = contextActions.getContextUsage;
 		this.compactFn = contextActions.compact;
 		this.getSystemPromptFn = contextActions.getSystemPrompt;
+		this.dispatchUserInputFn = contextActions.dispatchUserInput;
 
 		// Flush provider registrations queued during extension loading
 		for (const { name, config, extensionPath } of this.runtime.pendingProviderRegistrations) {
@@ -347,7 +388,9 @@ export class ExtensionRunner {
 		}
 
 		this.waitForIdleFn = async () => {};
-		this.newSessionHandler = async () => ({ cancelled: false });
+		this.newSessionHandler = async () => {
+			throw new Error("newSession is not available in this session mode (no command context bound)");
+		};
 		this.forkHandler = async () => ({ cancelled: false });
 		this.navigateTreeHandler = async () => ({ cancelled: false });
 		this.switchSessionHandler = async () => ({ cancelled: false });
@@ -484,6 +527,14 @@ export class ExtensionRunner {
 	}
 
 	emitError(error: ExtensionError): void {
+		if (this.errorListeners.size === 0) {
+			// SDK embeddings without onError would otherwise get zero signal.
+			console.error(`Extension error [${error.extensionPath}] (${error.event}): ${error.error}`);
+			if (error.stack) {
+				console.error(error.stack);
+			}
+			return;
+		}
 		for (const listener of this.errorListeners) {
 			listener(error);
 		}
@@ -630,6 +681,14 @@ export class ExtensionRunner {
 				runner.assertActive();
 				return runner.getSystemPromptFn();
 			},
+			dispatchUserInput: (input, options) => {
+				runner.assertActive();
+				return runner.dispatchUserInputFn(input, options);
+			},
+			newSession: (options) => {
+				runner.assertActive();
+				return runner.newSessionHandler(options);
+			},
 		};
 	}
 
@@ -644,10 +703,6 @@ export class ExtensionRunner {
 		context.waitForIdle = () => {
 			this.assertActive();
 			return this.waitForIdleFn();
-		};
-		context.newSession = (options) => {
-			this.assertActive();
-			return this.newSessionHandler(options);
 		};
 		context.fork = (entryId, options) => {
 			this.assertActive();
@@ -924,10 +979,10 @@ export class ExtensionRunner {
 	async emitBeforeAgentStart(
 		prompt: string,
 		images: ImageContent[] | undefined,
-		systemPrompt: string,
+		systemPromptSections: SystemPromptSection[],
 		systemPromptOptions: BuildSystemPromptOptions,
 	): Promise<BeforeAgentStartCombinedResult | undefined> {
-		let currentSystemPrompt = systemPrompt;
+		let currentSystemPrompt = flattenSystemPrompt(systemPromptSections);
 		const ctx = Object.defineProperties(
 			{},
 			Object.getOwnPropertyDescriptors(this.createContext()),
@@ -937,7 +992,9 @@ export class ExtensionRunner {
 			return currentSystemPrompt;
 		};
 		const messages: NonNullable<BeforeAgentStartEventResult["message"]>[] = [];
+		const contributedSections: SystemPromptSection[] = [];
 		let systemPromptModified = false;
+		let replacedByExtensionPath: string | undefined;
 
 		for (const ext of this.extensions) {
 			const handlers = ext.handlers.get("before_agent_start");
@@ -950,6 +1007,7 @@ export class ExtensionRunner {
 						prompt,
 						images,
 						systemPrompt: currentSystemPrompt,
+						systemPromptSections,
 						systemPromptOptions,
 					};
 					const handlerResult = await handler(event, ctx);
@@ -962,6 +1020,53 @@ export class ExtensionRunner {
 						if (result.systemPrompt !== undefined) {
 							currentSystemPrompt = result.systemPrompt;
 							systemPromptModified = true;
+							replacedByExtensionPath = ext.path;
+						}
+						if (result.systemPromptSection) {
+							const section = result.systemPromptSection;
+							// Malformed sections would otherwise surface as an opaque
+							// provider 400 naming neither extension nor field.
+							if (typeof section.id !== "string" || typeof section.text !== "string") {
+								this.emitError({
+									extensionPath: ext.path,
+									event: "before_agent_start",
+									error: "Ignoring systemPromptSection: `id` and `text` must be strings",
+								});
+							} else if (section.cacheRetention !== undefined && section.cacheRetention !== "none") {
+								// Unvalidated, the section would silently count as stable and
+								// cached; per-turn content there invalidates the whole prompt
+								// cache every request. Request-level retention ("short"/"long")
+								// is a different knob: CreateAgentSessionOptions.cacheRetention.
+								this.emitError({
+									extensionPath: ext.path,
+									event: "before_agent_start",
+									error:
+										`Ignoring systemPromptSection "${section.id}": \`cacheRetention\` must be "none" or omitted, ` +
+										`got ${JSON.stringify(section.cacheRetention)}`,
+								});
+							} else {
+								if (
+									section.cacheRetention !== "none" &&
+									contributedSections.some((s) => s.cacheRetention === "none")
+								) {
+									this.emitError({
+										extensionPath: ext.path,
+										event: "before_agent_start",
+										error:
+											`Stable systemPromptSection "${section.id}" was contributed after a volatile one; ` +
+											"it will sit after that section and be excluded from the cached prefix",
+									});
+								}
+								contributedSections.push(section);
+								// Keep the chained prompt seen by later handlers (and
+								// ctx.getSystemPrompt) complete. A string replacement stays
+								// authoritative, so contributions only fold in without one.
+								if (!systemPromptModified) {
+									currentSystemPrompt = flattenSystemPrompt(
+										spliceContributedSections(systemPromptSections, contributedSections),
+									);
+								}
+							}
 						}
 					}
 				} catch (err) {
@@ -977,10 +1082,22 @@ export class ExtensionRunner {
 			}
 		}
 
-		if (messages.length > 0 || systemPromptModified) {
+		// The drop is documented behavior (a replacement is authoritative), but
+		// surfacing it makes order-dependent extension interactions debuggable.
+		if (systemPromptModified && contributedSections.length > 0 && replacedByExtensionPath) {
+			const ids = contributedSections.map((s) => s.id).join(", ");
+			this.emitError({
+				extensionPath: replacedByExtensionPath,
+				event: "before_agent_start",
+				error: `Contributed system prompt section(s) ${ids} were dropped: this extension replaced the system prompt with a string, which is authoritative for the turn`,
+			});
+		}
+
+		if (messages.length > 0 || systemPromptModified || contributedSections.length > 0) {
 			return {
 				messages: messages.length > 0 ? messages : undefined,
 				systemPrompt: systemPromptModified ? currentSystemPrompt : undefined,
+				systemPromptSections: contributedSections.length > 0 ? contributedSections : undefined,
 			};
 		}
 

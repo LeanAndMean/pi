@@ -8,7 +8,7 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.js";
 import { createExtensionRuntime, discoverAndLoadExtensions } from "../src/core/extensions/loader.js";
-import { ExtensionRunner } from "../src/core/extensions/runner.js";
+import { ExtensionRunner, spliceContributedSections } from "../src/core/extensions/runner.js";
 import type { ExtensionActions, ExtensionContextActions, ProviderConfig } from "../src/core/extensions/types.js";
 import { KeybindingsManager, type KeyId } from "../src/core/keybindings.js";
 import { ModelRegistry } from "../src/core/model-registry.js";
@@ -78,6 +78,7 @@ describe("ExtensionRunner", () => {
 		getContextUsage: () => undefined,
 		compact: () => {},
 		getSystemPrompt: () => "",
+		dispatchUserInput: async () => {},
 	};
 
 	describe("shortcut conflicts", () => {
@@ -593,7 +594,7 @@ describe("ExtensionRunner", () => {
 			runner.onError((error) => errors.push(error.error));
 			runner.bindCore(extensionActions, extensionContextActions);
 
-			const chained = await runner.emitBeforeAgentStart("hello", undefined, "base", {
+			const chained = await runner.emitBeforeAgentStart("hello", undefined, [{ id: "core", text: "base" }], {
 				cwd: tempDir,
 			});
 
@@ -602,7 +603,376 @@ describe("ExtensionRunner", () => {
 			expect(chained).toEqual({
 				messages: undefined,
 				systemPrompt: "base\nfirst\nsecond",
+				systemPromptSections: undefined,
 			});
+		});
+
+		it("accumulates contributed sections in load order and exposes the base sections on the event", async () => {
+			const extCode1 = `
+				export default function(pi) {
+					pi.on("before_agent_start", async (event) => {
+						return {
+							systemPromptSection: {
+								id: "ext-one",
+								text: "\\n\\none (saw " + event.systemPromptSections.map((s) => s.id).join(",") + ")",
+							},
+						};
+					});
+				}
+			`;
+			const extCode2 = `
+				export default function(pi) {
+					pi.on("before_agent_start", async () => {
+						return {
+							systemPromptSection: { id: "ext-two", text: "\\n\\ntwo", cacheRetention: "none" },
+						};
+					});
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "before-agent-start-sections-1.ts"), extCode1);
+			fs.writeFileSync(path.join(extensionsDir, "before-agent-start-sections-2.ts"), extCode2);
+
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			expect(result.errors).toEqual([]);
+			expect(result.extensions).toHaveLength(2);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			const errors: string[] = [];
+			runner.onError((error) => errors.push(error.error));
+			runner.bindCore(extensionActions, extensionContextActions);
+
+			const combined = await runner.emitBeforeAgentStart(
+				"hello",
+				undefined,
+				[
+					{ id: "core", text: "base" },
+					{ id: "volatile", text: "\ndate", cacheRetention: "none" },
+				],
+				{ cwd: tempDir },
+			);
+
+			expect(errors).toEqual([]);
+
+			expect(combined).toEqual({
+				messages: undefined,
+				systemPrompt: undefined,
+				systemPromptSections: [
+					{ id: "ext-one", text: "\n\none (saw core,volatile)" },
+					{ id: "ext-two", text: "\n\ntwo", cacheRetention: "none" },
+				],
+			});
+		});
+
+		it("rejects a malformed section and reports the extension", async () => {
+			const extCode = `
+				export default function(pi) {
+					pi.on("before_agent_start", async () => {
+						return {
+							systemPromptSection: { id: 42, text: "not validated" },
+						};
+					});
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "malformed-section.ts"), extCode);
+
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			expect(result.errors).toEqual([]);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			const errors: Array<{ extensionPath: string; error: string }> = [];
+			runner.onError((error) => errors.push({ extensionPath: error.extensionPath, error: error.error }));
+			runner.bindCore(extensionActions, extensionContextActions);
+
+			const combined = await runner.emitBeforeAgentStart("hello", undefined, [{ id: "core", text: "base" }], {
+				cwd: tempDir,
+			});
+
+			expect(errors).toHaveLength(1);
+			expect(errors[0].extensionPath).toContain("malformed-section.ts");
+			expect(errors[0].error).toBe("Ignoring systemPromptSection: `id` and `text` must be strings");
+			expect(combined).toBeUndefined();
+		});
+
+		it("rejects a section with an invalid cacheRetention and reports the extension", async () => {
+			const extCode = `
+				export default function(pi) {
+					pi.on("before_agent_start", async () => {
+						return {
+							systemPromptSection: { id: "ext-bad", text: "\\n\\ndirectives", cacheRetention: "short" },
+						};
+					});
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "bad-retention.ts"), extCode);
+
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			expect(result.errors).toEqual([]);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			const errors: Array<{ extensionPath: string; error: string }> = [];
+			runner.onError((error) => errors.push({ extensionPath: error.extensionPath, error: error.error }));
+			runner.bindCore(extensionActions, extensionContextActions);
+
+			const combined = await runner.emitBeforeAgentStart("hello", undefined, [{ id: "core", text: "base" }], {
+				cwd: tempDir,
+			});
+
+			expect(errors).toHaveLength(1);
+			expect(errors[0].extensionPath).toContain("bad-retention.ts");
+			expect(errors[0].error).toBe(
+				'Ignoring systemPromptSection "ext-bad": `cacheRetention` must be "none" or omitted, got "short"',
+			);
+			expect(combined).toBeUndefined();
+		});
+
+		it("warns when a stable section is contributed after a volatile one but keeps both", async () => {
+			const extCode1 = `
+				export default function(pi) {
+					pi.on("before_agent_start", async () => {
+						return {
+							systemPromptSection: { id: "ext-volatile", text: "\\n\\nper-turn", cacheRetention: "none" },
+						};
+					});
+				}
+			`;
+			const extCode2 = `
+				export default function(pi) {
+					pi.on("before_agent_start", async () => {
+						return {
+							systemPromptSection: { id: "ext-stable", text: "\\n\\nlate stable" },
+						};
+					});
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "order-1-volatile.ts"), extCode1);
+			fs.writeFileSync(path.join(extensionsDir, "order-2-stable.ts"), extCode2);
+
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			expect(result.errors).toEqual([]);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			const errors: Array<{ extensionPath: string; error: string }> = [];
+			runner.onError((error) => errors.push({ extensionPath: error.extensionPath, error: error.error }));
+			runner.bindCore(extensionActions, extensionContextActions);
+
+			const combined = await runner.emitBeforeAgentStart("hello", undefined, [{ id: "core", text: "base" }], {
+				cwd: tempDir,
+			});
+
+			expect(errors).toHaveLength(1);
+			expect(errors[0].extensionPath).toContain("order-2-stable.ts");
+			expect(errors[0].error).toBe(
+				'Stable systemPromptSection "ext-stable" was contributed after a volatile one; ' +
+					"it will sit after that section and be excluded from the cached prefix",
+			);
+			// The warning is advisory: both sections are still contributed.
+			expect(combined?.systemPromptSections).toEqual([
+				{ id: "ext-volatile", text: "\n\nper-turn", cacheRetention: "none" },
+				{ id: "ext-stable", text: "\n\nlate stable" },
+			]);
+		});
+
+		it("reports contributed sections dropped by a string replacement, attributed to the replacing extension", async () => {
+			const extCode1 = `
+				export default function(pi) {
+					pi.on("before_agent_start", async () => {
+						return {
+							systemPromptSection: { id: "ext-dropped", text: "\\n\\ncontributed" },
+						};
+					});
+				}
+			`;
+			const extCode2 = `
+				export default function(pi) {
+					pi.on("before_agent_start", async () => {
+						return {
+							systemPrompt: "authoritative replacement",
+						};
+					});
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "drop-1-contributor.ts"), extCode1);
+			fs.writeFileSync(path.join(extensionsDir, "drop-2-replacer.ts"), extCode2);
+
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			expect(result.errors).toEqual([]);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			const errors: Array<{ extensionPath: string; error: string }> = [];
+			runner.onError((error) => errors.push({ extensionPath: error.extensionPath, error: error.error }));
+			runner.bindCore(extensionActions, extensionContextActions);
+
+			const combined = await runner.emitBeforeAgentStart("hello", undefined, [{ id: "core", text: "base" }], {
+				cwd: tempDir,
+			});
+
+			expect(errors).toHaveLength(1);
+			expect(errors[0].extensionPath).toContain("drop-2-replacer.ts");
+			expect(errors[0].error).toBe(
+				"Contributed system prompt section(s) ext-dropped were dropped: this extension replaced the system prompt with a string, which is authoritative for the turn",
+			);
+			expect(combined?.systemPrompt).toBe("authoritative replacement");
+		});
+
+		it("keeps a contribution made after a string replacement out of the chained prompt and attributes the drop to the replacer", async () => {
+			const extCode1 = `
+				export default function(pi) {
+					pi.on("before_agent_start", async () => {
+						return {
+							systemPrompt: "authoritative replacement",
+						};
+					});
+				}
+			`;
+			const extCode2 = `
+				export default function(pi) {
+					pi.on("before_agent_start", async () => {
+						return {
+							systemPromptSection: { id: "ext-late", text: "\\n\\nlate contribution" },
+						};
+					});
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "late-1-replacer.ts"), extCode1);
+			fs.writeFileSync(path.join(extensionsDir, "late-2-contributor.ts"), extCode2);
+
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			expect(result.errors).toEqual([]);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			const errors: Array<{ extensionPath: string; error: string }> = [];
+			runner.onError((error) => errors.push({ extensionPath: error.extensionPath, error: error.error }));
+			runner.bindCore(extensionActions, extensionContextActions);
+
+			const combined = await runner.emitBeforeAgentStart("hello", undefined, [{ id: "core", text: "base" }], {
+				cwd: tempDir,
+			});
+
+			expect(errors).toHaveLength(1);
+			expect(errors[0].extensionPath).toContain("late-1-replacer.ts");
+			expect(errors[0].error).toBe(
+				"Contributed system prompt section(s) ext-late were dropped: this extension replaced the system prompt with a string, which is authoritative for the turn",
+			);
+			// The late contribution is accepted but never folded into the chained prompt.
+			expect(combined?.systemPrompt).toBe("authoritative replacement");
+			expect(combined?.systemPromptSections).toEqual([{ id: "ext-late", text: "\n\nlate contribution" }]);
+		});
+
+		it("lets the string win when one extension returns both systemPrompt and systemPromptSection, attributing the drop to itself", async () => {
+			const extCode = `
+				export default function(pi) {
+					pi.on("before_agent_start", async () => {
+						return {
+							systemPrompt: "replacement from both",
+							systemPromptSection: { id: "ext-own", text: "\\n\\nown section" },
+						};
+					});
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "both-fields.ts"), extCode);
+
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			expect(result.errors).toEqual([]);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			const errors: Array<{ extensionPath: string; error: string }> = [];
+			runner.onError((error) => errors.push({ extensionPath: error.extensionPath, error: error.error }));
+			runner.bindCore(extensionActions, extensionContextActions);
+
+			const combined = await runner.emitBeforeAgentStart("hello", undefined, [{ id: "core", text: "base" }], {
+				cwd: tempDir,
+			});
+
+			expect(errors).toHaveLength(1);
+			expect(errors[0].extensionPath).toContain("both-fields.ts");
+			expect(errors[0].error).toBe(
+				"Contributed system prompt section(s) ext-own were dropped: this extension replaced the system prompt with a string, which is authoritative for the turn",
+			);
+			expect(combined?.systemPrompt).toBe("replacement from both");
+			expect(combined?.systemPromptSections).toEqual([{ id: "ext-own", text: "\n\nown section" }]);
+		});
+	});
+
+	describe("spliceContributedSections", () => {
+		it("prefixes contributed text that lacks a leading newline so it cannot glue onto the previous section", () => {
+			const base = [
+				{ id: "core", text: "You are pi." },
+				{ id: "volatile", text: "\ndate", cacheRetention: "none" as const },
+			];
+			const spliced = spliceContributedSections(base, [{ id: "ext", text: "Extension directives" }]);
+
+			expect(spliced.map((s) => s.id)).toEqual(["core", "ext", "volatile"]);
+			expect(spliced[1].text).toBe("\n\nExtension directives");
+		});
+
+		it("leaves contributed text that already starts with a newline untouched", () => {
+			const base = [{ id: "core", text: "You are pi." }];
+			const spliced = spliceContributedSections(base, [{ id: "ext", text: "\n\nAlready separated" }]);
+
+			expect(spliced.map((s) => s.id)).toEqual(["core", "ext"]);
+			expect(spliced[1].text).toBe("\n\nAlready separated");
+		});
+	});
+
+	describe("emitError fallback", () => {
+		it("logs to console.error when no listeners are registered", () => {
+			const runtime = createExtensionRuntime();
+			const runner = new ExtensionRunner([], runtime, tempDir, sessionManager, modelRegistry);
+			const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+			runner.emitError({
+				extensionPath: "/tmp/broken.ts",
+				event: "before_agent_start",
+				error: "boom",
+				stack: "fake stack",
+			});
+
+			expect(errorSpy).toHaveBeenCalledWith("Extension error [/tmp/broken.ts] (before_agent_start): boom");
+			expect(errorSpy).toHaveBeenCalledWith("fake stack");
+
+			errorSpy.mockClear();
+			const errors: string[] = [];
+			const unsubscribe = runner.onError((error) => errors.push(error.error));
+			runner.emitError({ extensionPath: "/tmp/broken.ts", event: "before_agent_start", error: "boom" });
+
+			expect(errorSpy).not.toHaveBeenCalled();
+			expect(errors).toEqual(["boom"]);
+
+			unsubscribe();
+			errorSpy.mockRestore();
+		});
+	});
+
+	describe("unbound handler defaults", () => {
+		it("rejects dispatchUserInput when no input pipeline is bound", async () => {
+			const runtime = createExtensionRuntime();
+			const runner = new ExtensionRunner([], runtime, tempDir, sessionManager, modelRegistry);
+
+			await expect(runner.createContext().dispatchUserInput("hello")).rejects.toThrow(
+				"dispatchUserInput is not available in this session mode (no input pipeline bound)",
+			);
+		});
+
+		it("rejects newSession when no command context is bound", async () => {
+			const runtime = createExtensionRuntime();
+			const runner = new ExtensionRunner([], runtime, tempDir, sessionManager, modelRegistry);
+
+			await expect(runner.createContext().newSession()).rejects.toThrow(
+				"newSession is not available in this session mode (no command context bound)",
+			);
+		});
+
+		it("rejects newSession again after the command context is unbound", async () => {
+			const runtime = createExtensionRuntime();
+			const runner = new ExtensionRunner([], runtime, tempDir, sessionManager, modelRegistry);
+
+			runner.bindCommandContext({
+				waitForIdle: async () => {},
+				newSession: async () => ({ cancelled: false }),
+				fork: async () => ({ cancelled: false }),
+				navigateTree: async () => ({ cancelled: false }),
+				switchSession: async () => ({ cancelled: false }),
+				reload: async () => {},
+			});
+			await expect(runner.createContext().newSession()).resolves.toEqual({ cancelled: false });
+
+			runner.bindCommandContext(undefined);
+			await expect(runner.createContext().newSession()).rejects.toThrow(
+				"newSession is not available in this session mode (no command context bound)",
+			);
 		});
 	});
 

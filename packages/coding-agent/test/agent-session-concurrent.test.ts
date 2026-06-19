@@ -12,6 +12,7 @@ import {
 	EventStream,
 	getModel,
 	type ImageContent,
+	type SystemPromptSection,
 	type TextContent,
 } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
@@ -140,9 +141,7 @@ describe("AgentSession concurrent prompt guard", () => {
 		expect(session.isStreaming).toBe(true);
 
 		// Second prompt should reject
-		await expect(session.prompt("Second message")).rejects.toThrow(
-			"Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message.",
-		);
+		await expect(session.prompt("Second message")).rejects.toThrow(/Agent is already processing/);
 
 		// Cleanup
 		await session.abort();
@@ -448,7 +447,7 @@ describe("AgentSession concurrent prompt guard", () => {
 				emitBeforeAgentStart: (
 					prompt: string,
 					images: unknown,
-					systemPrompt: string,
+					systemPromptSections: SystemPromptSection[],
 					systemPromptOptions: BuildSystemPromptOptions,
 				) => Promise<undefined>;
 				invalidate: (message?: string) => void;
@@ -592,7 +591,7 @@ describe("AgentSession concurrent prompt guard", () => {
 				emitBeforeAgentStart: (
 					prompt: string,
 					images: unknown,
-					systemPrompt: string,
+					systemPromptSections: SystemPromptSection[],
 					systemPromptOptions: BuildSystemPromptOptions,
 				) => Promise<undefined>;
 				invalidate: (message?: string) => void;
