@@ -196,19 +196,19 @@ Increment `<N>` for each release. When rebasing on a new upstream version, reset
 3. **Rename the package** (if not already renamed on this branch):
    Change `"name"` in `packages/coding-agent/package.json` from `@earendil-works/pi-coding-agent` to `@leanandmean/pi-coding-agent`.
 
-4. **Build and publish**:
-   ```bash
-   cd packages/coding-agent
-   npm publish --access public --tag scramjet
-   ```
-   The `--tag scramjet` dist-tag keeps this separate from the upstream `latest` tag.
-
-5. **Commit the version bump** (on main or the release branch):
+4. **Commit and push**:
    ```bash
    git add packages/coding-agent/package.json
    git commit -m "Release @leanandmean/pi-coding-agent@0.74.0-scramjet.2"
    git push
    ```
+
+5. **Create the release** (triggers CI publish via `.github/workflows/release.yml`):
+   ```bash
+   gh release create v0.74.0-scramjet.2 --title "v0.74.0-scramjet.2" --notes "<release notes>"
+   ```
+   CI verifies the tag matches `packages/coding-agent/package.json`, builds, and runs
+   `npm publish --access public --tag scramjet`.
 
 6. **Update scramjet** (`~/repos/scramjet/package.json`):
    ```bash
@@ -221,6 +221,7 @@ Increment `<N>` for each release. When rebasing on a new upstream version, reset
 - Do NOT run `npm run release:patch` / `npm run release:minor` — those are upstream scripts
 - Do NOT publish all workspaces (`npm publish -ws`) — only `packages/coding-agent` is published
 - Do NOT use the upstream `scripts/release.mjs`
+- Do NOT run `npm publish` locally — CI handles it on tag push
 
 ## **CRITICAL** Git Rules for Parallel Agents **CRITICAL**
 
