@@ -50,7 +50,7 @@ jobs:
         run: npm ci
 
       - name: Build
-        run: npm run build
+        run: npm run build -w packages/tui -w packages/ai -w packages/agent -w packages/coding-agent
 
       - name: Publish to npm
         working-directory: packages/coding-agent
