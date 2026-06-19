@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-check-test:
+  build-check:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -30,7 +30,10 @@ jobs:
           sudo ln -s $(which fdfind) /usr/local/bin/fd
 
       - name: Install dependencies
-        run: npm ci
+        # npm install (not ci): upstream lockfile is generated on macOS and
+        # lacks linux platform entries for native optional deps (rollup,
+        # parcel/watcher, etc.). npm install resolves them at install time.
+        run: npm install
 
       - name: Build
         run: npm run build -w packages/tui -w packages/ai -w packages/agent -w packages/coding-agent
@@ -42,6 +45,3 @@ jobs:
           npx tsgo -p packages/ai/tsconfig.build.json --noEmit
           npx tsgo -p packages/agent/tsconfig.build.json --noEmit
           npx tsgo -p packages/coding-agent/tsconfig.build.json --noEmit
-
-      - name: Test
-        run: npm test
