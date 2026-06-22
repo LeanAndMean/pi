@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Merged upstream v0.74.1: Together AI provider, image generation APIs, Node 26 fetch fixes, session affinity headers, provider compat improvements ([#14](https://github.com/LeanAndMean/pi/issues/14))
+
 ### Fixed
 
 - Fixed parallel subagent results being truncated to 100 characters instead of returning full output ([#11](https://github.com/LeanAndMean/pi/issues/11))
