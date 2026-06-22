@@ -247,6 +247,53 @@ Increment `<N>` for each release. When rebasing on a new upstream version, reset
 - Do NOT run `npm publish` locally — CI handles it on tag push
 - Do NOT rename packages in source — only the release workflow does this
 
+## Incorporating Upstream Versions
+
+When the upstream pi repo releases a new version, incorporate it one version at a time.
+
+### Workflow
+
+1. **Create an issue** (e.g., "Rebase fork on upstream v0.75.0"). Note the upstream tag and any known high-risk files from a quick diff scan.
+
+2. **Create a feature branch and attempt rebase**:
+   ```bash
+   git fetch upstream
+   git checkout -b rebase/v0.75.0
+   git rebase upstream/v0.75.0
+   ```
+   If conflicts are trivial (package.json versions, lockfile), resolve directly.
+
+3. **If conflicts are non-trivial**, use `/mach12:issue-plan` to produce a structured resolution plan identifying mechanical vs semantic conflicts.
+
+4. **After resolution**: update internal dep ranges to the new prerelease version, run `npm install`, verify the scoped build and check pass.
+
+5. **Open a PR, run reviews** to catch regressions (upstream removing/renaming APIs we use, provider behavior changes breaking our patches).
+
+6. **Merge, bump version, release** following the normal release steps above. Reset the scramjet counter: `<new-upstream>-scramjet.1`.
+
+### High-risk files
+
+These are where our fork diverges most from upstream. Expect conflicts here:
+
+- `packages/ai/src/types.ts` — `SystemPromptSection` type
+- `packages/ai/src/providers/anthropic.ts` — structured system blocks
+- `packages/ai/src/utils/system-prompt.ts` — `flattenSystemPrompt` (fork-only file)
+- `packages/ai/src/index.ts` — re-exports of fork additions
+- `packages/agent/src/types.ts` — `systemPrompt: string | SystemPromptSection[]`
+- `packages/coding-agent/src/core/extensions/types.ts` — `dispatchUserInput`, `newSession`, `systemPromptSections`
+- `packages/coding-agent/src/core/extensions/runner.ts` — sectioned prompt handling, dispatch binding
+- `packages/coding-agent/src/core/agent-session.ts` — sectioned prompt integration
+- `packages/coding-agent/src/core/system-prompt.ts` — `buildSystemPromptSections`
+- `.github/workflows/` — CI and release (ours differ completely from upstream)
+- `AGENTS.md` — fork-specific docs
+
+### Rules
+
+- One upstream version per issue. Do not skip versions — compounding conflicts are harder to bisect.
+- Prefer rebase over merge to keep our patches as a clean series on top of upstream.
+- After rebase, always verify: `npm install && npm run build -w packages/tui -w packages/ai -w packages/agent -w packages/coding-agent` succeeds.
+- If upstream renamed or removed an API that scramjet uses, fix it in this repo before releasing. Check `~/repos/scramjet` imports against the new types.
+
 ## **CRITICAL** Git Rules for Parallel Agents **CRITICAL**
 
 Multiple agents may work on different files in the same worktree simultaneously. You MUST follow these rules:
