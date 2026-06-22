@@ -36,7 +36,7 @@ This is a fork of the pi monorepo. Four packages are published under `@leanandme
 
 - After code changes (not documentation changes): run the scoped check that the pre-commit hook uses (biome + per-package tsgo). Do NOT use `npm run check` — it runs the root check which includes web-ui and stale upstream test types. The pre-commit hook handles this automatically on commit.
 - Note: `npm run check` does not run tests.
-- NEVER run: `npm run dev`, `npm run build`, `npm test`
+- NEVER run: `npm run dev`, `npm test`, or the root `npm run build` (builds web-ui which fails without macOS native deps). Workspace-scoped builds are fine: `npm run build -w packages/ai` etc.
 - Only run specific tests if user instructs: `npx tsx ../../node_modules/vitest/dist/cli.js --run test/specific.test.ts`
 - Run tests from the package root, not the repo root.
 - If you create or modify a test file, you MUST run that test file and iterate until it passes.
@@ -200,7 +200,10 @@ All four share the same version. The release workflow renames them from `@earend
 
 `<upstream-base>-scramjet.<N>` — e.g. `0.74.0-scramjet.1`, `0.74.0-scramjet.4`.
 
-Increment `<N>` for each release. When rebasing on a new upstream version, reset `<N>` to 1 with the new base (e.g. `0.75.0-scramjet.1`).
+Increment `<N>` for fork-only changes within the same upstream base. When merging a
+new upstream version, carry the current `<N>` forward (e.g., `0.74.0-scramjet.4` →
+`0.75.0-scramjet.4`). This keeps the scramjet number monotonically reflecting the
+fork's patch generation, independent of upstream.
 
 ### Steps
 
@@ -249,27 +252,50 @@ Increment `<N>` for each release. When rebasing on a new upstream version, reset
 
 ## Incorporating Upstream Versions
 
-When the upstream pi repo releases a new version, incorporate it one version at a time.
+When the upstream pi repo releases a new version, incorporate it using a merge strategy.
+
+### Version scheme on upgrade
+
+The version becomes `<new-upstream-version>-scramjet.<N>` where `<N>` carries forward from
+the current fork version. For example, if the fork is at `0.74.0-scramjet.4` and upstream
+releases `0.75.0`, the next fork version is `0.75.0-scramjet.4` (same scramjet number,
+new base). Increment `<N>` only for fork-only changes within the same upstream base.
 
 ### Workflow
 
-1. **Create an issue** (e.g., "Rebase fork on upstream v0.75.0"). Note the upstream tag and any known high-risk files from a quick diff scan.
+1. **Create an issue** (e.g., "Merge upstream v0.75.0 into fork"). Note the upstream tag and any known high-risk files from a quick `git diff` scan.
 
-2. **Create a feature branch and attempt rebase**:
+2. **Create a feature branch and merge upstream**:
    ```bash
    git fetch upstream
-   git checkout -b rebase/v0.75.0
-   git rebase upstream/v0.75.0
+   git checkout -b merge/v0.75.0
+   git merge upstream/v0.75.0
    ```
-   If conflicts are trivial (package.json versions, lockfile), resolve directly.
+   Use merge (not rebase) — rebase rewrites history and requires force-push, which is
+   prohibited. Merge preserves all existing SHAs and is safe for published branches.
 
-3. **If conflicts are non-trivial**, use `/mach12:issue-plan` to produce a structured resolution plan identifying mechanical vs semantic conflicts.
+3. **Resolve conflicts**:
+   - `package-lock.json`: accept upstream's version entirely, then run `npm install` to
+     regenerate with correct platform bindings. Never manually resolve lockfile conflicts.
+   - `packages/web-ui/`: accept all upstream changes without modification (we don't publish it).
+   - `.github/workflows/`: keep ours — upstream CI is completely different.
+   - `AGENTS.md`: keep ours.
+   - For semantic conflicts in high-risk files (see below), use `/mach12:issue-plan` to
+     produce a structured resolution plan.
 
-4. **After resolution**: update internal dep ranges to the new prerelease version, run `npm install`, verify the scoped build and check pass.
+4. **After resolution**: update all four package versions to `<new-upstream>-scramjet.<N>`,
+   update internal dep ranges to match (e.g., `^0.75.0-scramjet.4`), run `npm install`,
+   verify the scoped build passes:
+   ```bash
+   npm run build -w packages/tui -w packages/ai -w packages/agent -w packages/coding-agent
+   ```
 
-5. **Open a PR, run reviews** to catch regressions (upstream removing/renaming APIs we use, provider behavior changes breaking our patches).
+5. **Open a PR, run reviews** to catch regressions: did upstream remove/rename APIs we
+   depend on? Did provider behavior change in ways that break our sectioned prompt patches?
+   Check `~/repos/scramjet` imports against the new types.
 
-6. **Merge, bump version, release** following the normal release steps above. Reset the scramjet counter: `<new-upstream>-scramjet.1`.
+6. **Merge the PR, release** following the normal release steps. The new version is
+   `<upstream-version>-scramjet.<N>`.
 
 ### High-risk files
 
@@ -289,10 +315,11 @@ These are where our fork diverges most from upstream. Expect conflicts here:
 
 ### Rules
 
-- One upstream version per issue. Do not skip versions — compounding conflicts are harder to bisect.
-- Prefer rebase over merge to keep our patches as a clean series on top of upstream.
-- After rebase, always verify: `npm install && npm run build -w packages/tui -w packages/ai -w packages/agent -w packages/coding-agent` succeeds.
+- One minor/major upstream version per issue. Patch releases within the same minor can be batched (merge directly onto the latest patch).
+- Use merge, not rebase. Rebase requires force-push which is prohibited and rewrites published history.
+- After merge, always verify: `npm install && npm run build -w packages/tui -w packages/ai -w packages/agent -w packages/coding-agent` succeeds.
 - If upstream renamed or removed an API that scramjet uses, fix it in this repo before releasing. Check `~/repos/scramjet` imports against the new types.
+- For `packages/web-ui/` conflicts: always accept upstream. We do not modify or publish it.
 
 ## **CRITICAL** Git Rules for Parallel Agents **CRITICAL**
 
